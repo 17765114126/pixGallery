@@ -129,13 +129,11 @@ class SQLiteDB:
         params = []
 
         # 添加筛选条件
-        if req.title:
-            # 添加筛选条件
-            where_clauses = []
-            for field, value in req.dict().items():
-                if value is not None and field not in ['table_name', 'page', 'page_size']:
-                    where_clauses.append(f"{field} LIKE ?")
-                    params.append(f"%{value}%")
+        where_clauses = []
+        for field, value in req.dict().items():
+            if value is not None and field not in ['table_name', 'page', 'page_size']:
+                where_clauses.append(f"{field} LIKE ?")
+                params.append(f"%{value}%")
 
             if where_clauses:
                 base_query += " WHERE " + " AND ".join(where_clauses)
