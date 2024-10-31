@@ -2,18 +2,114 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class Content(BaseModel):
+class User(BaseModel):
+    table_name: str = "user"
+    id: Optional[int] = None
+    username: Optional[str] = ''
+    password: Optional[str] = ''
+    mobile: Optional[str] = ''
+    realname: Optional[str] = ''
+    mailbox: Optional[str] = ''
+    head_img: Optional[str] = ''
+    background: Optional[str] = ''
+    signature: Optional[str] = ''
+    status: Optional[bool] = 1
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Comment(BaseModel):
+    table_name: str = "comment"
+    id: Optional[int] = None
+    cid: Optional[int] = None
+    author_id: Optional[int] = None
+    ip: Optional[str] = None
+    content: Optional[str] = None
+    type: Optional[bool] = 0
+    status: Optional[bool] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Contents(BaseModel):
     table_name: str = "contents"
     id: Optional[int] = None
     title: Optional[str] = None
     thumb_img: Optional[str] = None
     content: Optional[str] = None
     author_id: Optional[int] = None
-    type: Optional[int] = None
-    status: Optional[int] = None
-    tags_id: Optional[int] = None
+    type: Optional[bool] = 1
+    status: Optional[bool] = 0
+    tags_id: Optional[str] = ''
     categorie_id: Optional[int] = None
-    hits: Optional[int] = None
-    sort: Optional[int] = None
-    # create_time: Optional[int] = None
-    # del_flag: Optional[int] = None
+    hits: Optional[int] = 0
+    sort: Optional[int] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Material(BaseModel):
+    table_name: str = "material"
+    id: Optional[int] = None
+    thumb_img: Optional[str] = None
+    content: Optional[str] = None
+    user_id: Optional[int] = None
+    type: Optional[bool] = 1
+    status: Optional[bool] = 0
+    source: Optional[str] = ''
+    author: Optional[str] = '佚名'
+    original: Optional[bool] = 0
+    metas_id: Optional[int] = None
+    hits: Optional[int] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Metas(BaseModel):
+    table_name: str = "metas"
+    id: Optional[int] = None
+    name: Optional[str] = ''
+    type: Optional[int] = 0
+    sort: Optional[int] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Tag(BaseModel):
+    table_name: str = "tag"
+    id: Optional[int] = None
+    name: Optional[str] = ''
+    sort: Optional[int] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Wall_haven(BaseModel):
+    table_name: str = "wall_haven"
+    id: Optional[int] = None
+    img_url: Optional[str] = ''
+    source: Optional[int] = 0
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Website_resource(BaseModel):
+    table_name: str = "website_resource"
+    id: Optional[int] = None
+    website_title_id: Optional[int] = None
+    name: Optional[str] = ''
+    website_url: Optional[str] = ''
+    state: Optional[str] = ''
+    icon: Optional[str] = ''
+    sort: Optional[int] = 1
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0
+
+
+class Website_title(BaseModel):
+    table_name: str = "website_title"
+    id: Optional[int] = None
+    title: Optional[str] = ''
+    sort: Optional[int] = 1
+    # create_time: Optional[str] = CURRENT_TIMESTAMP
+    # del_flag: Optional[bool] = 0

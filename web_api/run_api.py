@@ -3,7 +3,7 @@ import uvicorn
 from db import SQLiteDB
 import os
 from Req import BaseReq
-from Do import Content
+from Do import Contents
 
 app = FastAPI()
 
@@ -32,13 +32,13 @@ def del_data(table_name: str, id: int):
 
 # content表添加或修改
 @app.post("/content/add_or_update")
-def add_or_update_content(do: Content):
+def add_or_update_content(do: Contents):
     we_library.add_or_update(do, do.table_name)
     return True
 
 
-# 启动命令（必须在主类目录下）：uvicorn library:app --reload
+# 启动命令（必须在主类目录下）：uvicorn run_api:app --reload
 # 访问地址：http://127.0.0.1:7789
 # 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:7789/docs
 if __name__ == '__main__':
-    uvicorn.run(app='library:app', host="127.0.0.1", port=7789, reload=True)
+    uvicorn.run(app='run_api:app', host="127.0.0.1", port=7789, reload=True)
