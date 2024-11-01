@@ -1,5 +1,18 @@
-from pydantic import BaseModel
 from typing import Optional
+from pydantic import BaseModel, Field
+from db import SQLiteDB
+import os
+
+we_library = SQLiteDB.SQLiteDB(os.path.join('..', 'db', 'we_library.db'))
+
+
+class BaseReq(BaseModel):
+    table_name: str = "contents"
+    page: int = Field(default=1, ge=1)  # 默认值为1，且必须大于等于1
+    page_size: int = Field(default=10, ge=-1)  # 默认值为10，允许-1表示不分页
+
+    class Config:
+        extra = 'allow'  # 允许额外的字段
 
 
 class User(BaseModel):
@@ -84,7 +97,7 @@ class Tag(BaseModel):
     # del_flag: Optional[bool] = 0
 
 
-class Wall_haven(BaseModel):
+class WallHaven(BaseModel):
     table_name: str = "wall_haven"
     id: Optional[int] = None
     img_url: Optional[str] = ''
@@ -93,7 +106,7 @@ class Wall_haven(BaseModel):
     # del_flag: Optional[bool] = 0
 
 
-class Website_resource(BaseModel):
+class WebsiteResource(BaseModel):
     table_name: str = "website_resource"
     id: Optional[int] = None
     website_title_id: Optional[int] = None
@@ -106,7 +119,7 @@ class Website_resource(BaseModel):
     # del_flag: Optional[bool] = 0
 
 
-class Website_title(BaseModel):
+class WebsiteTitle(BaseModel):
     table_name: str = "website_title"
     id: Optional[int] = None
     title: Optional[str] = ''

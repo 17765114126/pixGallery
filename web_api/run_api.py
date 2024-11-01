@@ -1,22 +1,11 @@
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from db import SQLiteDB
 import uvicorn
-import os
-from Do import Contents
+from Do import BaseReq, we_library
+from website_resource import router as resource_router
 
 app = FastAPI()
 
-we_library = SQLiteDB.SQLiteDB(os.path.join('..', 'db', 'we_library.db'))
-
-
-class BaseReq(BaseModel):
-    table_name: str = "contents"
-    page: int = Field(default=1, ge=1)  # 默认值为1，且必须大于等于1
-    page_size: int = Field(default=10, ge=-1)  # 默认值为10，允许-1表示不分页
-
-    class Config:
-        extra = 'allow'  # 允许额外的字段
+app.include_router(resource_router)
 
 
 # 分页查询
@@ -39,15 +28,10 @@ def del_data(table_name: str, id: int):
     return True
 
 
-# content表添加或修改
-@app.post("/content/add_or_update")
-def add_or_update_content(do: Contents):
-    we_library.add_or_update(do, do.table_name)
-    return True
-
+# 使用 Python 3 提供静态文件服务命令（在dist根目录运行）: python -m http.server 8688
 
 # 启动命令（必须在主类目录下）：uvicorn run_api:app --reload
-# 访问地址：http://127.0.0.1:7789
-# 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:7789/docs
+# 访问地址：http://127.0.0.1:8686
+# 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:8686/docs
 if __name__ == '__main__':
-    uvicorn.run(app='run_api:app', host="127.0.0.1", port=7789, reload=True)
+    uvicorn.run(app='run_api:app', host="127.0.0.1", port=8686, reload=True)
