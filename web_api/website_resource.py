@@ -1,47 +1,22 @@
 from fastapi import APIRouter
-from Do import BaseReq, we_library, WebsiteResource
+from Do import we_library, WebsiteResource
 
 router = APIRouter()
 
 base_url = "/resource"
 
 
-# 分页查询
+# 列表查询
 @router.post(f"{base_url}/list")
-def page(req: BaseReq):
-    base_query = f"SELECT * FROM website_resource"
-    params = []
-
-    # 添加筛选条件
-    where_clauses = []
-    for field, value in req.dict().items():
-        if value is not None and field not in ['table_name', 'page', 'page_size']:
-            where_clauses.append(f"{field} LIKE ?")
-            params.append(f"%{value}%")
-
-        if where_clauses:
-            base_query += " WHERE " + " AND ".join(where_clauses)
-
-    # 获取总记录数
-    count = we_library.fetch_count(base_query, tuple(params))
-
-    # 添加分页
-    if req.page_size != -1:
-        base_query += " LIMIT ? OFFSET ?"
-        params.extend([req.page_size, (req.page - 1) * req.page_size])
-
+async def get_list():
+    title_list = we_library.fetch_all("SELECT * FROM website_title where del_flag = 0 order by sort asc;")
+    for title in title_list:
+        resource_list = we_library.fetch_all(
+            f"SELECT * FROM website_resource where del_flag = 0 and website_title_id = {title.get('id')};")
+        title['resources'] = resource_list
     return {
-        "page": req.page,
-        "page_size": req.page_size,
-        "count": count,
-        "data": we_library.fetch_all(base_query, tuple(params))
+        "data": title_list
     }
-
-
-# 根据id查询
-@router.get(f"{base_url}/info")
-def get_info(table_name: str, id: int):
-    return we_library.fetch_one(f"SELECT * FROM {table_name} WHERE id=?;", (id,))
 
 
 # 根据id删除

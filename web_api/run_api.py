@@ -1,31 +1,57 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request,Response, HTTPException
 import uvicorn
-from Do import BaseReq, we_library
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+
 from website_resource import router as resource_router
+from index import router as index_router, cache
+from material import router as material_router
+from metas import router as metas_router
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 app.include_router(resource_router)
+app.include_router(index_router)
+app.include_router(material_router)
+app.include_router(metas_router)
+
+# 添加 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允许所有来源
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有方法
+    allow_headers=["*"],  # 允许所有头部
+)
+
+# 白名单列表
+WHITELIST = ["/login"]
 
 
-# 分页查询
-@app.post("/list")
-def page(req: BaseReq):
-    return we_library.page(req, req.table_name)
+# 拦截所有接口判断用户是否登录
+@app.middleware("http")
+async def add_process(request: Request, call_next):
+    # 处理预检请求
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        return response
+    # 检查请求路径是否在白名单中
+    if request.url.path in WHITELIST:
+        return await call_next(request)
 
-
-# 根据id查询
-@app.get("/info")
-def get_info(table_name: str, id: int):
-    return we_library.fetch_one(f"SELECT * FROM {table_name} WHERE id=?;", (id,))
-
-
-# 根据id删除
-@app.get("/del")
-def del_data(table_name: str, id: int):
-    delete_data_query = f"DELETE FROM {table_name} WHERE id=?;"
-    we_library.execute_query(delete_data_query, (id,))
-    return True
+    token = request.headers.get("Authorization")
+    if token:
+        # 从缓存中获取数据
+        mobile = cache.get(token)
+        if mobile:
+            return await call_next(request)
+    raise HTTPException(status_code=401, detail="Invalid token")
 
 
 # 使用 Python 3 提供静态文件服务命令（在dist根目录运行）: python -m http.server 8688
