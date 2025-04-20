@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request,Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -31,27 +31,27 @@ app.add_middleware(
 WHITELIST = ["/login"]
 
 
-# 拦截所有接口判断用户是否登录
-@app.middleware("http")
-async def add_process(request: Request, call_next):
-    # 处理预检请求
-    if request.method == "OPTIONS":
-        response = Response(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-        return response
-    # 检查请求路径是否在白名单中
-    if request.url.path in WHITELIST:
-        return await call_next(request)
-
-    token = request.headers.get("Authorization")
-    if token:
-        # 从缓存中获取数据
-        mobile = cache.get(token)
-        if mobile:
-            return await call_next(request)
-    raise HTTPException(status_code=401, detail="Invalid token")
+# # 拦截所有接口判断用户是否登录
+# @app.middleware("http")
+# async def add_process(request: Request, call_next):
+#     # 处理预检请求
+#     if request.method == "OPTIONS":
+#         response = Response(status_code=200)
+#         response.headers["Access-Control-Allow-Origin"] = "*"
+#         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+#         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+#         return response
+#     # 检查请求路径是否在白名单中
+#     if request.url.path in WHITELIST:
+#         return await call_next(request)
+#
+#     token = request.headers.get("Authorization")
+#     if token:
+#         # 从缓存中获取数据
+#         mobile = cache.get(token)
+#         if mobile:
+#             return await call_next(request)
+#     raise HTTPException(status_code=401, detail="Invalid token")
 
 
 # 使用 Python 3 提供静态文件服务命令（在dist根目录运行）: python -m http.server 8688
@@ -59,5 +59,9 @@ async def add_process(request: Request, call_next):
 # 启动命令（必须在主类目录下）：uvicorn run_api:app --reload
 # 访问地址：http://127.0.0.1:8686
 # 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:8686/docs
-if __name__ == '__main__':
+def run():
     uvicorn.run(app='run_api:app', host="127.0.0.1", port=8686, reload=True)
+
+
+if __name__ == '__main__':
+    run()

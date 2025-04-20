@@ -1,6 +1,7 @@
 from fastapi import APIRouter, status, HTTPException
 from Do import BaseReq, we_library
 from cachetools import TTLCache
+import requests
 
 router = APIRouter()
 
@@ -12,7 +13,7 @@ def authenticate_user(mobile: str, password: str):
 
 
 # 创建一个最大大小为 100，超过 60 秒失效的缓存
-cache = TTLCache(maxsize=100, ttl=60*60)
+cache = TTLCache(maxsize=100, ttl=60 * 60)
 
 
 @router.post("/login")
@@ -31,21 +32,43 @@ async def login(req: BaseReq):
         )
 
 
+def get_bing_wallpaper():
+    url = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-US"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        image_url = "https://www.bing.com" + data["images"][0]["url"]
+        return image_url
+    except Exception as e:
+        print("Error:", e)
+        return None
+
+
+if __name__ == "__main__":
+    wallpaper_url = get_bing_wallpaper()
+    if wallpaper_url:
+        print("今日必应壁纸:", wallpaper_url)
+    else:
+        print("获取失败！")
+
+
 # 获取随机一张图片及素材
 @router.post(f"/index/getRandomImg")
 async def get_random_img():
-    one_haven = we_library.fetch_one(f"SELECT * FROM wall_haven ORDER BY RANDOM() LIMIT 1;")
+    one_haven = get_bing_wallpaper()
+    # one_haven = we_library.fetch_one(f"SELECT * FROM wall_haven where del_flag = 0 ORDER BY RANDOM() LIMIT 1;")
     one_material = we_library.fetch_one(f"SELECT * FROM material ORDER BY RANDOM() LIMIT 1;")
     # todo 判断是否收藏
 
     return {
-        "id": one_haven.get("id"),
-        "imgUrl": one_haven.get("img_url"),
+        # "id": one_haven.get("id"),
+        # "imgUrl": one_haven.get("img_url"),
+        "imgUrl": one_haven,
         "contentId": one_material.get("id"),
         "content": one_material.get("content"),
         "source": one_material.get("source"),
         "author": one_material.get("author"),
-        "createTime": one_haven.get("create_time"),
+        # "createTime": one_haven.get("create_time"),
         # "isEnshrine": one_material.get(""), # 是否收藏 0: 否 1：是
     }
 
