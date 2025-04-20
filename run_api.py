@@ -3,10 +3,10 @@ import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from website_resource import router as resource_router
-from index import router as index_router, cache
-from material import router as material_router
-from metas import router as metas_router
+from web_api.website_resource import router as resource_router
+from web_api.index import router as index_router, cache
+from web_api.material import router as material_router
+from web_api.metas import router as metas_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ WHITELIST = ["/login"]
 # 启动命令（必须在主类目录下）：uvicorn run_api:app --reload
 # 访问地址：http://127.0.0.1:8686
 # 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:8686/docs
+
 def run():
     uvicorn.run(app='run_api:app', host="127.0.0.1", port=8686, reload=True)
 

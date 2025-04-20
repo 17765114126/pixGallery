@@ -18,10 +18,14 @@ async def custom_404_handler(request, exc: HTTPException):
     return FileResponse(index_path)
 
 
-if __name__ == "__main__":
+def run():
     uvicorn.run(
-        "server:app",  # 使用字符串形式
+        "run_web:app",  # 使用字符串形式
         host="127.0.0.1",
         port=8688,
         access_log=False
     )
+
+
+if __name__ == "__main__":
+    run()
