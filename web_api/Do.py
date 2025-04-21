@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from db import SQLiteDB
 import os
 
-we_library = SQLiteDB.SQLiteDB(os.path.join('..', 'db', 'we_library.db'))
+we_library = SQLiteDB.SQLiteDB(os.path.join('db', 'we_library.db'))
 
 
 class BaseReq(BaseModel):
