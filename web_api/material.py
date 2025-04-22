@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from web_api.Do import BaseReq, we_library
+from web_api.Do import BaseReq, we_library, Material
 
 router = APIRouter()
 
@@ -31,11 +31,28 @@ async def page(req: BaseReq):
         params.extend([req.size, (req.current - 1) * req.size])
 
     return {
+        "code": 0,
         "current": req.current,
         "size": req.size,
         "total": count,
         # "pages": count/req.size,
-        "data": we_library.fetch_all(base_query, tuple(params))
+        "model": we_library.fetch_all(base_query, tuple(params))
+    }
+
+
+# 保存
+@router.post(f"{base_url}/save")
+async def save(do: Material):
+    one = we_library.fetch_one(f"SELECT * FROM material WHERE content = ?;", (do.content,))
+    if one and one['content'] is not None:
+        return {
+            "code": 1,
+            "msg": '句子已存在'
+        }
+    we_library.add_or_update(do, do.table_name)
+    return {
+        "code": 0,
+        "msg": '发布成功'
     }
 
 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -7,6 +7,7 @@ from web_api.website_resource import router as resource_router
 from web_api.index import router as index_router, cache
 from web_api.material import router as material_router
 from web_api.metas import router as metas_router
+from web_api.tag import router as tag_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ app.include_router(resource_router)
 app.include_router(index_router)
 app.include_router(material_router)
 app.include_router(metas_router)
-
+app.include_router(tag_router)
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,

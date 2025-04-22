@@ -56,8 +56,7 @@ def generate_class_from_table(table_name: str, db_path: str) -> Type[T]:
 if __name__ == '__main__':
     db_path = os.path.join('..', 'db', 'we_library.db')
 
-    table_list = ["user", "comment", "contents", "material", "metas", "tag", "wall_haven", "website_resource",
-                  "website_title"]
+    table_list = ["tag"]
     for table in table_list:
         Tag = generate_class_from_table(table, db_path)
         print(Tag)
