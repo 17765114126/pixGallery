@@ -9,6 +9,7 @@ import run_api
 import webbrowser
 import socket
 import time
+import config
 
 app = FastAPI()
 # 挂载静态文件（自动处理 index.html）
@@ -28,7 +29,7 @@ def run():
     uvicorn.run(
         "run_web:app",  # 使用字符串形式
         host="127.0.0.1",
-        port=8688,
+        port=config.web_host,
         access_log=False
     )
 
@@ -62,11 +63,11 @@ if __name__ == "__main__":
     api_process.start()
     web_process.start()
     # 等待端口就绪
-    if is_port_ready(8688):
+    if is_port_ready(config.web_host):
         # 打开默认浏览器
-        webbrowser.open("http://localhost:8688")
+        webbrowser.open(f"http://localhost:{config.web_host}")
     else:
-        print("⚠️ 服务启动失败，请手动访问 http://localhost:8688")
+        print(f"⚠️ 服务启动失败，请手动访问 http://localhost:{config.web_host}")
     # 保持主进程运行
     try:
         api_process.join()
