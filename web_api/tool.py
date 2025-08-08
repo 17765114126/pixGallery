@@ -1,5 +1,14 @@
 import requests
 
+# from data import find_duplicates
+# # 查找重复文件
+# @router.post("/find_duplicates")
+# async def find_repeat_file(req: BaseReq):
+#     folder_path = req.folder_path
+#     duplicates = find_duplicates.run_duplicates(folder_path)
+#     return result(0, duplicates)
+
+
 
 def get_weather(city_name):
     api_key = 'cfa4206962272d3cc3cf15200d229196'

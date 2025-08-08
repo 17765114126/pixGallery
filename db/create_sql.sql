@@ -112,3 +112,25 @@ CREATE TABLE website_title (
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 创建时间
     del_flag TINYINT DEFAULT 0              -- 逻辑删除
 );
+
+
+CREATE TABLE album (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    filepath TEXT NOT NULL,
+    filesize INTEGER NOT NULL,
+    filetype TEXT NOT NULL CHECK(filetype IN ('image', 'video', 'audio')),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 创建时间
+    del_flag TINYINT DEFAULT 0              -- 逻辑删除
+)
+
+ALTER TABLE album ADD COLUMN longitude REAL;  -- 经度(允许为空)
+ALTER TABLE album ADD COLUMN latitude REAL;   -- 纬度(允许为空)
+ALTER TABLE album ADD file_create_time TIMESTAMP DEFAULT NULL;
+
+CREATE TABLE IF NOT EXISTS album_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_name TEXT NOT NULL UNIQUE,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- 创建时间
+)

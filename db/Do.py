@@ -126,3 +126,23 @@ class WebsiteTitle(BaseModel):
     sort: Optional[int] = 1
     # create_time: Optional[str] = CURRENT_TIMESTAMP
     # del_flag: Optional[bool] = 0
+
+class Album(BaseModel):
+    table_name: str = "album"
+    id: Optional[int] = None
+    folder_id: Optional[int] = None
+    filename: Optional[str] = None
+    filepath: Optional[str] = None
+    filesize: Optional[int] = None
+    filetype: Optional[str] = None
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+    create_time: Optional[str] = None
+    file_create_time: Optional[str] = None
+    # del_flag: Optional[bool] = 0
+
+class AlbumFolders(BaseModel):
+    table_name: str = "album_folders"
+    id: Optional[int] = None
+    folder_name: Optional[str] = None
+    create_time: Optional[str] = None

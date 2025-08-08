@@ -120,9 +120,20 @@ class SQLiteDB:
     def add_or_update(self, req, tal_name):
         if req.id:
             sql_query, params = self.update_sql(req, tal_name)
+            self.execute_query(sql_query, params)
+            return req.id
         else:
+            # 插入操作
             sql_query, params = self.insert_sql(req, tal_name)
-        self.execute_query(sql_query, params)
+            self.execute_query(sql_query, params)
+            with self.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql_query, params)
+                conn.commit()
+                # 获取最后插入ID
+                last_insert_id = cursor.lastrowid
+            return last_insert_id
+
 
     def page(self, req, tal_name):
         base_query = f"SELECT * FROM {tal_name}"

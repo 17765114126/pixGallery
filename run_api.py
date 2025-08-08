@@ -1,14 +1,17 @@
 from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import logging
-import config
+import config,log_config
 
 from web_api.website_resource import router as resource_router
 from web_api.index import router as index_router, cache
 from web_api.material import router as material_router
 from web_api.metas import router as metas_router
 from web_api.tag import router as tag_router
+from web_api.website_title import router as website_title_router
+from web_api.album import router as album_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +23,10 @@ app.include_router(index_router)
 app.include_router(material_router)
 app.include_router(metas_router)
 app.include_router(tag_router)
+app.include_router(album_router)
+app.include_router(website_title_router)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
@@ -63,7 +70,14 @@ WHITELIST = ["/login"]
 # 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:8686/docs
 
 def run():
-    uvicorn.run(app='run_api:app', host="127.0.0.1", port=config.api_host, reload=True)
+    # 开启日志配置
+    log_config.log_run()
+    logging.info('------主程序开始运行-------')
+    uvicorn.run(app='run_api:app',
+                host="127.0.0.1",
+                port=config.api_host,
+                reload=True,
+                log_config=None)
 
 
 if __name__ == '__main__':
