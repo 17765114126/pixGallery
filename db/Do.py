@@ -146,3 +146,4 @@ class AlbumFolders(BaseModel):
     id: Optional[int] = None
     folder_name: Optional[str] = None
     create_time: Optional[str] = None
+    is_lock: Optional[int] = None

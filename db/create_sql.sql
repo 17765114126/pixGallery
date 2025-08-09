@@ -82,14 +82,6 @@ CREATE TABLE tag (
     del_flag TINYINT DEFAULT 0              -- 逻辑删除
 );
 
--- 壁纸来源表
-CREATE TABLE wall_haven (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- 主键，自动递增
-    img_url TEXT DEFAULT '',               -- 图片地址
-    source INTEGER DEFAULT 0,              -- 来源 0：https://wallhaven.cc/
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 创建时间
-    del_flag TINYINT DEFAULT 0              -- 逻辑删除
-);
 
 -- 网站资源表
 CREATE TABLE website_resource (
@@ -134,3 +126,4 @@ CREATE TABLE IF NOT EXISTS album_folders (
     folder_name TEXT NOT NULL UNIQUE,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- 创建时间
 )
+ALTER TABLE album_folders ADD COLUMN is_lock TINYINT DEFAULT 0;   -- 是否锁定

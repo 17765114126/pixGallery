@@ -13,9 +13,16 @@ router = APIRouter()
 
 base_url = "/album"
 
+
 # 文件列表
 @router.post(f"{base_url}/list")
 async def get_files(req: BaseReq):
+    # 执行查询
+    is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0", tuple([]))
+    # 提取ID列表
+    # folder_ids = [str(item['id']) for item in is_lock_folders]
+    folder_ids = [item['id'] for item in is_lock_folders]
+
     # 基础查询
     base_query = "SELECT * FROM album"
     conditions = []
@@ -36,6 +43,12 @@ async def get_files(req: BaseReq):
         conditions.append("filename LIKE ?")
         params.append(f'%{req.filename_keyword}%')
 
+
+    if req.is_lock:
+        placeholders = ",".join(["?"] * len(folder_ids))
+        conditions.append(f"folder_id IN ({placeholders})")
+        params.extend(folder_ids)
+
     # 构建WHERE子句
     if conditions:
         base_query += " WHERE " + " AND ".join(conditions)
@@ -45,11 +58,6 @@ async def get_files(req: BaseReq):
 
     # 获取总记录数
     count = we_library.fetch_count(base_query, tuple(params))
-
-    # 添加分页
-    # if req.size != -1:
-    #     base_query += " LIMIT ? OFFSET ?"
-    #     params.extend([req.size, (req.current - 1) * req.size])
 
     # 执行查询
     files = we_library.fetch_all(base_query, tuple(params))
@@ -75,6 +83,7 @@ async def get_files(req: BaseReq):
         "total": count,
         "model": grouped_files  # 返回分组后的数据
     }
+
 
 # 移动文件至指定相册
 @router.get(f"{base_url}/update_album")
@@ -120,10 +129,13 @@ async def del_album(ids: str):
         )
         folder_id = one.get("folder_id")
         folder_one = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-
-        # 删除物理文件
-        file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"], one["filename"])
-        os.remove(file_path)
+        try:
+            # 删除物理文件
+            file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"],
+                                     one["filename"])
+            os.remove(file_path)
+        except Exception as e:
+            print("Error:", e)
         # 删除数据库记录
         we_library.execute_query("DELETE FROM album WHERE id=?;", (id,))
     return {"success": True, "message": f"删除成功"}
@@ -131,10 +143,10 @@ async def del_album(ids: str):
 
 # 查询相册列表
 @router.get(f"{base_url}/folders")
-async def get_folders(id: int):
+async def get_folders(id: int, is_lock: int):
     if id == -1:
         # 如果传-1则查询全部
-        folder_list = we_library.fetch_all("SELECT * FROM album_folders")
+        folder_list = we_library.fetch_all(f"SELECT * FROM album_folders WHERE is_lock = {is_lock}")
         for folder in folder_list:
             folder_id = folder.get("id")
             album_count = we_library.fetch_all(f"SELECT count(*) FROM album where folder_id = {folder_id}")
@@ -187,6 +199,37 @@ async def update_album_folder(req: BaseReq):
     return {"status": "success", "message": f"修改成功"}
 
 
+# 锁定相册
+@router.get(f"{base_url}/lock_album")
+async def lock_album(id: int):
+    do_folders = AlbumFolders(
+        table_name="album_folders",  # 直接初始化字段值
+        id=id,
+        is_lock=1
+    )
+    we_library.add_or_update(do_folders, do_folders.table_name)
+    return True
+
+
+# 解锁相册
+@router.get(f"{base_url}/unlock_album")
+async def lock_album(id: int):
+    do_folders = AlbumFolders(
+        table_name="album_folders",  # 直接初始化字段值
+        id=id,
+        is_lock=0
+    )
+    we_library.add_or_update(do_folders, do_folders.table_name)
+    return True
+
+
+# 设置锁定密码
+@router.get(f"{base_url}/set_lock_password")
+async def set_lock_password(password: str):
+    file_util.update_value("lock_password", password)
+    return True
+
+
 # 删除相册
 @router.get(f"{base_url}/del_album_folder")
 async def delete_album_folder(id: int):
@@ -204,6 +247,38 @@ async def delete_album_folder(id: int):
     # 删除相册记录
     we_library.execute_query("DELETE FROM album_folders WHERE id=?;", (id,))
     return {"status": "success", "message": f"已删除"}
+
+
+# 判断是否未设置密码
+@router.get(f"{base_url}/is_lock_password")
+async def is_lock_password():
+    if file_util.load_config().get("lock_password") is None:
+        return True
+    return False
+
+
+# 设置锁定密码
+@router.get(f"{base_url}/set_lock_password")
+async def set_lock_password(password: str):
+    file_util.update_value("lock_password", password)
+    return True
+
+
+# 重置锁定密码
+@router.get(f"{base_url}/reset_lock_password")
+async def reset_lock_password(old_password: str, new_password: str):
+    if file_util.load_config().get("lock_password") != old_password:
+        return False
+    file_util.update_value("lock_password", new_password)
+    return True
+
+
+# 访问相册
+@router.get(f"{base_url}/unlock")
+async def unlock(password: str):
+    if file_util.load_config().get("lock_password") == password:
+        return True
+    return False
 
 
 # 上传文件

@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+
 # 获取程序执行目录
 def _get_executable_path():
     if getattr(sys, 'frozen', False):
@@ -21,3 +22,5 @@ source_img_dir = "static/album/"
 api_host = 8686
 
 web_host = 8688
+
+lock_password = None
