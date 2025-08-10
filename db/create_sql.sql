@@ -119,7 +119,8 @@ CREATE TABLE album (
 
 ALTER TABLE album ADD COLUMN longitude REAL;  -- 经度(允许为空)
 ALTER TABLE album ADD COLUMN latitude REAL;   -- 纬度(允许为空)
-ALTER TABLE album ADD file_create_time TIMESTAMP DEFAULT NULL;
+ALTER TABLE album ADD capture_time TIMESTAMP DEFAULT NULL;
+ALTER TABLE album ADD COLUMN metadata TEXT;   -- 元数据
 
 CREATE TABLE IF NOT EXISTS album_folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

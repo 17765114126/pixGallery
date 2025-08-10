@@ -138,7 +138,8 @@ class Album(BaseModel):
     longitude: Optional[float] = None
     latitude: Optional[float] = None
     create_time: Optional[str] = None
-    file_create_time: Optional[str] = None
+    capture_time: Optional[str] = None
+    metadata: Optional[str] = None
     # del_flag: Optional[bool] = 0
 
 class AlbumFolders(BaseModel):

@@ -4,3 +4,4 @@ pydantic
 cachetools
 python-multipart
 Pillow
+exifread

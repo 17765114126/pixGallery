@@ -125,7 +125,6 @@ class SQLiteDB:
         else:
             # 插入操作
             sql_query, params = self.insert_sql(req, tal_name)
-            self.execute_query(sql_query, params)
             with self.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(sql_query, params)

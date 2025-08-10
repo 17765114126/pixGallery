@@ -1,13 +1,15 @@
+import json
+
 from fastapi import APIRouter, HTTPException, UploadFile, Form, File
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel
+from typing import List
 from db.Do import we_library, Album, BaseReq, AlbumFolders
+from web_api import file_util
 import os
 import config
 import shutil
-
+import io
 import datetime
-from web_api import file_util
 
 router = APIRouter()
 
@@ -17,10 +19,8 @@ base_url = "/album"
 # 文件列表
 @router.post(f"{base_url}/list")
 async def get_files(req: BaseReq):
-    # 执行查询
+    # 获取非锁定文件夹ID列表
     is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0", tuple([]))
-    # 提取ID列表
-    # folder_ids = [str(item['id']) for item in is_lock_folders]
     folder_ids = [item['id'] for item in is_lock_folders]
 
     # 基础查询
@@ -34,16 +34,16 @@ async def get_files(req: BaseReq):
         params.append(req.folder_id)
 
     # 文件类型筛选
-    if req.file_type:  # 假设前端传入file_type参数
+    if req.file_type:
         conditions.append("filetype = ?")
         params.append(req.file_type)
 
     # 文件名关键词筛选
-    if req.filename_keyword:  # 假设前端传入filename_keyword参数
+    if req.filename_keyword:
         conditions.append("filename LIKE ?")
         params.append(f'%{req.filename_keyword}%')
 
-
+    # 锁定状态筛选
     if req.is_lock:
         placeholders = ",".join(["?"] * len(folder_ids))
         conditions.append(f"folder_id IN ({placeholders})")
@@ -53,8 +53,8 @@ async def get_files(req: BaseReq):
     if conditions:
         base_query += " WHERE " + " AND ".join(conditions)
 
-    # 添加排序
-    base_query += " ORDER BY create_time DESC"
+    # 添加排序（确保NULL值排在最后）
+    base_query += " ORDER BY capture_time DESC"
 
     # 获取总记录数
     count = we_library.fetch_count(base_query, tuple(params))
@@ -65,23 +65,29 @@ async def get_files(req: BaseReq):
     # 分组数据
     grouped_files = {}
     for file in files:
-        # 获取文件路径
         folder_id = file.get("folder_id")
         folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
         file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), file.get("filename"))
 
-        # 按创建时间分组（使用日期部分）
-        create_date = file["create_time"].split()[0]  # 假设create_time是"YYYY-MM-DD HH:MM:SS"格式
-        if create_date not in grouped_files:
-            grouped_files[create_date] = []
-        grouped_files[create_date].append(file)
+        # 处理capture_time为null的情况
+        capture_time = file.get("capture_time")
+        if capture_time is None:
+            group_key = "null"  # 为null值创建单独分组
+        else:
+            # 提取日期部分（格式：YYYY-MM-DD）
+            group_key = capture_time.split()[0] if isinstance(capture_time, str) else capture_time
+
+        # 初始化分组列表
+        if group_key not in grouped_files:
+            grouped_files[group_key] = []
+        grouped_files[group_key].append(file)
 
     return {
         "success": True,
         "current": req.current,
         "size": req.size,
         "total": count,
-        "model": grouped_files  # 返回分组后的数据
+        "model": grouped_files
     }
 
 
@@ -283,18 +289,66 @@ async def unlock(password: str):
 
 # 上传文件
 @router.post(f"{base_url}/upload_file")
-async def upload_file(file_stream: UploadFile = File(...),
+async def upload_file(file: UploadFile = File(...),
                       folder_id: int = Form(...),
                       folder_name: str = Form(...),
-                      file_name: str = Form(...)):
+                      last_modified_time: str = Form(...)):
+    # 读取文件内容
+    file_read = await file.read()
+    # 提取纯文件名
+    filename = os.path.basename(file.filename)  # 关键修改
+    file_size = len(file_read)
+    # 支持的媒体文件扩展名
+    media_extensions = {
+        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'],
+        'video': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv'],
+        'audio': ['.mp3', '.wav', '.ogg', '.flac', '.aac']
+    }
+    # 检查文件类型
+    file_ext = os.path.splitext(filename)[1].lower()
+    filetype = None
+
+    for category, exts in media_extensions.items():
+        if file_ext in exts:
+            filetype = category
+            break
+
+    if not filetype:
+        raise HTTPException(400, "不支持的文件类型")
+
+    # 初始化元数据变量
+    longitude, latitude = None, None
+    capture_time = None
+    exif_data = {}
+
+    # 仅当图片文件时尝试提取EXIF
+    if filetype == 'image':
+        try:
+            file_stream = io.BytesIO(file_read)
+            exif_data = file_util.extract_exif(file_stream)
+            important_metadata = file_util.extract_important_metadata(exif_data)
+
+            # 提取GPS和拍摄时间
+            if 'gps' in important_metadata and important_metadata['gps']:
+                longitude = important_metadata['gps'].get('longitude')
+                latitude = important_metadata['gps'].get('latitude')
+
+            capture_time = important_metadata['timestamps'].get('capture')
+            # 当拍摄时间不存在赋值将前端传过来的文件创建时间
+            if capture_time is None:
+                capture_time = last_modified_time
+        except Exception as e:
+            print(f"EXIF提取失败: {e}")
+    else:
+        capture_time = last_modified_time
     # 查询相册是否存在
     if folder_id == -1:
         folder_one = we_library.fetch_one(
             "SELECT * FROM album_folders WHERE folder_name = ?;",
             (folder_name,))
         if folder_one is None:
-            access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, file_name)
-            os.makedirs(access_path, exist_ok=True)
+            folders_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name)
+            os.makedirs(folders_path, exist_ok=True)
             do_album_folders = AlbumFolders(
                 table_name="album_folders",
                 folder_name=folder_name
@@ -302,55 +356,34 @@ async def upload_file(file_stream: UploadFile = File(...),
             folder_id = we_library.add_or_update(do_album_folders, do_album_folders.table_name)
         if folder_one is not None:
             folder_id = folder_one["id"]
-
     else:
         folder_one = we_library.fetch_one(
             "SELECT * FROM album_folders WHERE id = ?;",
             (folder_id,)
         )
         folder_name = folder_one["folder_name"]
-    access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, file_name)
+
+    access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, filename)
     access_path = os.path.normpath(access_path)  # 修复斜杠问题
     # 分块写入文件（适合大文件）
+    await file.seek(0)  # 重置文件指针到开头
     with open(access_path, "wb") as buffer:
-        while content := await file_stream.read(1024 * 1024):  # 每次读取1MB
+        while content := await file.read(1024 * 1024):  # 每次读取1MB
             buffer.write(content)
-    # 支持的媒体文件扩展名
-    media_extensions = {
-        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'],
-        'video': ['.mp4', '.mov', '.avi', '.mkv', '.webm'],
-        'audio': ['.mp3', '.wav', '.ogg', '.flac']
-    }
-    if not os.path.isfile(access_path):
-        return False
-        # 检查文件类型
-    _, ext = os.path.splitext(file_name.lower())
-    filetype = None
-    for type_name, exts in media_extensions.items():
-        if ext in exts:
-            filetype = type_name
-            break
-    if not filetype:
-        return False
-    # 初始化GPS变量
-    longitude, latitude = None, None
-    # 仅当图片文件时尝试提取GPS
-    if filetype == 'image':
-        longitude, latitude = file_util.get_lat_lon(access_path)
-    # 获取文件信息
-    file_stat = os.stat(access_path)
-    file_create_time = datetime.datetime.fromtimestamp(file_stat.st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+    # 序列化元数据
+    json_str = json.dumps(exif_data, indent=4, ensure_ascii=False)
     # 插入数据库记录
     do_files = Album(
         table_name="album",  # 直接初始化字段值
         folder_id=folder_id,
-        filename=file_name,
+        filename=filename,
         filepath=str(access_path),
-        filesize=file_stat.st_size,
+        filesize=file_size,
         filetype=filetype,
         longitude=longitude,
         latitude=latitude,
-        file_create_time=file_create_time,
+        capture_time=capture_time,
+        metadata=str(json_str),
     )
     we_library.add_or_update(do_files, do_files.table_name)
     return {
@@ -369,32 +402,33 @@ class MapLocation(BaseModel):
 @router.get(f"{base_url}/map/locations", response_model=List[MapLocation])
 def get_map_locations():
     try:
-        # 构建查询SQL
-        query = """
-                SELECT ROUND(longitude, 4) AS longitude, \
-                       ROUND(latitude, 4)  AS latitude, \
+        # 精度位数	物理范围	适用场景
+        # 1位小数	≈10km	城市级别聚合（推荐方案）
+        # 2位小数	≈1km	城区/街区级别
+        # 3位小数	≈100m	精确地标建筑
+        # 4位小数	≈11m（原始值）	高精度定位（不适合城市聚合）
+        precision = 1
+        query = f"""
+                SELECT ROUND(longitude, {precision}) AS longitude, -- 关键修改
+                       ROUND(latitude, {precision})  AS latitude,  -- 关键修改
                        COUNT(id) AS count
                 FROM album
                 WHERE
                     del_flag = 0
                   AND longitude IS NOT NULL
                   AND latitude IS NOT NULL
-                GROUP BY ROUND(longitude, 4), ROUND(latitude, 4) \
+                GROUP BY ROUND(longitude, {precision}), ROUND(latitude, {precision}) -- 同步修改
                 """
 
-        # 执行查询
         results = we_library.fetch_all(query)
-        city_name = "杭州"
-        # 转换结果格式
-        locations = []
-        for row in results:
-            locations.append({
+        locations = [
+            {
                 "longitude": row["longitude"],
                 "latitude": row["latitude"],
-                "count": row["count"],
-                "city": city_name  # 添加城市名字段
-            })
-
+                "count": row["count"]
+            }
+            for row in results
+        ]
         return locations
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -404,13 +438,14 @@ def get_map_locations():
 @router.get(f"{base_url}/map/location/photos")
 def get_location_photos(longitude: float, latitude: float):
     try:
+        precision = 1
         # 构建查询SQL
-        query = """
+        query = f"""
                 SELECT *
                 FROM album
                 WHERE del_flag = 0
-                  AND ROUND(longitude, 4) = ROUND(?, 4)
-                  AND ROUND(latitude, 4) = ROUND(?, 4) \
+                  AND ROUND(longitude, {precision}) = ROUND(?, {precision})
+                  AND ROUND(latitude, {precision}) = ROUND(?, {precision}) \
                 """
 
         # 执行查询

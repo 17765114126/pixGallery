@@ -3,8 +3,9 @@ import subprocess
 import re
 import shutil
 import ast
-from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
+from datetime import datetime
+
+import exifread
 
 
 def format_windows_path(path):
@@ -159,7 +160,6 @@ def update_value(key: str, value):
     try:
         with open('config.py', 'r+', encoding='utf-8') as f:
             content = f.read()
-
             # 保留注释的替换逻辑
             new_content = re.sub(
                 rf'^(\s*{key}\s*=\s*)(.*?)(\s*#.*)?$',
@@ -167,11 +167,9 @@ def update_value(key: str, value):
                 content,
                 flags=re.MULTILINE
             )
-
             # 如果没找到配置项则追加
             # if new_content == content:
             #     new_content += f"\n{key} = {repr(value)}\n"
-
             f.seek(0)
             f.write(new_content)
             f.truncate()
@@ -180,54 +178,80 @@ def update_value(key: str, value):
             f.write(f"{key} = {repr(value)}")
 
 
-def get_exif_gps(image_path):
-    """获取图片的GPS信息（如果有）"""
-    img = Image.open(image_path)
-    exif_data = img._getexif()  # 获取Exif数据
+def extract_exif(file_stream):
+    """提取EXIF元数据并处理GPS坐标"""
+    file_stream.seek(0)
+    tags = exifread.process_file(file_stream, details=False)
+    exif_data = {}
+    for tag, value in tags.items():
+        if tag not in ('JPEGThumbnail', 'TIFFThumbnail', 'Filename', 'EXIF MakerNote'):
+            exif_data[tag] = str(value)
+    # 处理GPS坐标
+    if 'GPS GPSLatitude' in tags and 'GPS GPSLongitude' in tags:
+        try:
+            latitude = _convert_gps(tags['GPS GPSLatitude'])
+            longitude = _convert_gps(tags['GPS GPSLongitude'])
+            exif_data['GPS'] = {
+                'latitude': latitude,
+                'longitude': longitude,
+                'lat_ref': str(tags.get('GPS GPSLatitudeRef', 'N')),
+                'lon_ref': str(tags.get('GPS GPSLongitudeRef', 'E'))
+            }
+        except Exception as e:
+            print(f"GPS转换错误: {e}")
+    return exif_data
 
-    if not exif_data:
-        return None
 
-    # 查找GPS标签ID（34853）
+def _convert_gps(gps_value):
+    """将 GPS 坐标转换为十进制"""
+    d, m, s = [float(ratio.num) / float(ratio.den) for ratio in gps_value.values]
+    return d + (m / 60) + (s / 3600)
+
+
+def extract_important_metadata(exif_data):
+    """从EXIF数据中提取关键参数"""
+    important = {}
+    # 时间信息 - 优先使用原始拍摄时间
+    capture_time = exif_data.get('EXIF DateTimeOriginal') or exif_data.get('Image DateTime')
+    # 转换时间格式 (YYYY:MM:DD HH:MM:SS -> ISO格式)
+    if capture_time:
+        try:
+            dt_obj = datetime.strptime(capture_time, "%Y:%m:%d %H:%M:%S")
+            capture_time = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            capture_time = None
+
+    important['timestamps'] = {
+        'capture': capture_time,
+        'gps_date': exif_data.get('GPS GPSDate', ''),
+        'gps_time': exif_data.get('GPS GPSTimeStamp', '')
+    }
+    # 图像信息
+    important['image'] = {
+        'width': exif_data.get('Image ImageWidth', ''),
+        'height': exif_data.get('Image ImageLength', '')
+    }
+    # GPS信息
     gps_info = {}
-    for tag_id, value in exif_data.items():
-        tag_name = TAGS.get(tag_id, tag_id)
-        if tag_name == "GPSInfo":
-            # 解析GPS子标签
-            for gps_tag_id in value:
-                gps_tag_name = GPSTAGS.get(gps_tag_id, gps_tag_id)
-                gps_info[gps_tag_name] = value[gps_tag_id]
-
-    return gps_info if gps_info else None
-
-
-def dms_to_decimal(dms, ref):
-    """将度分秒格式转换为十进制格式"""
-    degrees, minutes, seconds = dms
-    decimal = degrees + minutes / 60 + seconds / 3600
-    # 处理方向（南纬/西经为负数）
-    if ref in ['S', 'W']:
-        decimal = -decimal
-    return decimal
-
-
-def get_lat_lon(image_path):
-    """从图片中提取经纬度（十进制）"""
-    gps_info = get_exif_gps(image_path)
-    if not gps_info:
-        return None, None
-
-    try:
-        # 提取纬度（GPSLatitude）和方向（GPSLatitudeRef）
-        lat_dms = gps_info['GPSLatitude']
-        lat_ref = gps_info['GPSLatitudeRef']
-        latitude = dms_to_decimal(lat_dms, lat_ref)
-
-        # 提取经度（GPSLongitude）和方向（GPSLongitudeRef）
-        lon_dms = gps_info['GPSLongitude']
-        lon_ref = gps_info['GPSLongitudeRef']
-        longitude = dms_to_decimal(lon_dms, lon_ref)
-
-        return longitude, latitude
-    except KeyError:
-        return None, None
+    if 'GPS' in exif_data:
+        gps_info = {
+            'latitude': exif_data['GPS'].get('latitude'),
+            'longitude': exif_data['GPS'].get('longitude'),
+            'altitude': exif_data.get('GPS GPSAltitude', ''),
+            'coordinates': f"{exif_data['GPS'].get('latitude')}, {exif_data['GPS'].get('longitude')}"
+        }
+    else:
+        # 尝试从原始GPS数据解析
+        try:
+            if 'GPS GPSLatitude' in exif_data:
+                lat = _convert_gps(exif_data['GPS GPSLatitude'])
+                lon = _convert_gps(exif_data['GPS GPSLongitude'])
+                gps_info = {
+                    'latitude': lat,
+                    'longitude': lon,
+                    'coordinates': f"{lat}, {lon}"
+                }
+        except Exception as e:
+            print(f"备用GPS解析错误: {e}")
+    important['gps'] = gps_info
+    return important
