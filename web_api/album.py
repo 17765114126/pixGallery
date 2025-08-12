@@ -1,8 +1,6 @@
 import json
 
-from fastapi import APIRouter, HTTPException, UploadFile, Form, File
-from pydantic import BaseModel
-from typing import List
+from fastapi import APIRouter, HTTPException, UploadFile, Form, File, Query
 from db.Do import we_library, Album, BaseReq, AlbumFolders
 from web_api import file_util
 import os
@@ -16,78 +14,83 @@ router = APIRouter()
 base_url = "/album"
 
 
-# 文件列表
 @router.post(f"{base_url}/list")
 async def get_files(req: BaseReq):
     # 获取非锁定文件夹ID列表
     is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0", tuple([]))
     folder_ids = [item['id'] for item in is_lock_folders]
-
     # 基础查询
     base_query = "SELECT * FROM album"
     conditions = []
     params = []
-
     # 文件夹筛选
     if req.folder_id != -1:
         conditions.append("folder_id = ?")
         params.append(req.folder_id)
-
     # 文件类型筛选
     if req.file_type:
         conditions.append("filetype = ?")
         params.append(req.file_type)
-
     # 文件名关键词筛选
     if req.filename_keyword:
         conditions.append("filename LIKE ?")
         params.append(f'%{req.filename_keyword}%')
-
     # 锁定状态筛选
     if req.is_lock:
         placeholders = ",".join(["?"] * len(folder_ids))
         conditions.append(f"folder_id IN ({placeholders})")
         params.extend(folder_ids)
-
     # 构建WHERE子句
     if conditions:
         base_query += " WHERE " + " AND ".join(conditions)
-
     # 添加排序（确保NULL值排在最后）
     base_query += " ORDER BY capture_time DESC"
-
-    # 获取总记录数
-    count = we_library.fetch_count(base_query, tuple(params))
-
-    # 执行查询
-    files = we_library.fetch_all(base_query, tuple(params))
-
+    # 执行查询获取所有文件（不直接分页）
+    all_files = we_library.fetch_all(base_query, tuple(params))
     # 分组数据
     grouped_files = {}
-    for file in files:
+    for file in all_files:
         folder_id = file.get("folder_id")
         folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
         file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), file.get("filename"))
-
+        if file.get("thumb_path") is not None:
+            file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), file.get("filename"))
+        else:
+            file["thumb_path"] = None
         # 处理capture_time为null的情况
         capture_time = file.get("capture_time")
         if capture_time is None:
-            group_key = "null"  # 为null值创建单独分组
+            group_key = "null"
         else:
             # 提取日期部分（格式：YYYY-MM-DD）
             group_key = capture_time.split()[0] if isinstance(capture_time, str) else capture_time
-
         # 初始化分组列表
         if group_key not in grouped_files:
             grouped_files[group_key] = []
         grouped_files[group_key].append(file)
-
+    # 将分组转换为列表并按日期降序排序
+    sorted_groups = sorted(
+        [(date, files) for date, files in grouped_files.items() if date != "null"],
+        key=lambda x: x[0],
+        reverse=True
+    )
+    # 添加null组到末尾（如果有）
+    if "null" in grouped_files:
+        sorted_groups.append(("null", grouped_files["null"]))
+    # 计算分页参数
+    total_groups = len(sorted_groups)
+    start_idx = (req.current - 1) * req.size
+    end_idx = start_idx + req.size
+    # 获取当前页的分组数据
+    paginated_groups = sorted_groups[start_idx:end_idx]
+    # 转换为前端需要的字典格式
+    result_model = {date: files for date, files in paginated_groups}
     return {
         "success": True,
         "current": req.current,
         "size": req.size,
-        "total": count,
-        "model": grouped_files
+        "total": total_groups,  # 分组总数而非文件总数
+        "model": result_model
     }
 
 
@@ -110,9 +113,13 @@ async def update_album(ids: str, folder_id: int):
         new_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, new_folder["folder_name"],
                                      one["filename"])
         # 将文件移动至新相册
-        # 移动文件
         shutil.move(old_file_path, new_file_path)
-
+        old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, old_folder["folder_name"],
+                                     one["filename"])
+        new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
+                                     one["filename"])
+        # 将缩略图移动至新相册
+        shutil.move(old_thumb_path_path, new_thumb_path_path)
         # 更新数据库记录
         do_album = Album(
             table_name="album",  # 直接初始化字段值
@@ -140,6 +147,10 @@ async def del_album(ids: str):
             file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"],
                                      one["filename"])
             os.remove(file_path)
+            # 删除缩略图
+            thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_one["folder_name"],
+                                     one["filename"])
+            os.remove(thumb_path)
         except Exception as e:
             print("Error:", e)
         # 删除数据库记录
@@ -157,6 +168,14 @@ async def get_folders(id: int, is_lock: int):
             folder_id = folder.get("id")
             album_count = we_library.fetch_all(f"SELECT count(*) FROM album where folder_id = {folder_id}")
             folder["file_count"] = album_count[0].get("count(*)")
+            album_one = we_library.fetch_one(
+                "SELECT * FROM album WHERE filetype = ? and folder_id = ? LIMIT 1;",
+                ("image",folder_id,)
+            )
+            if album_one:
+                if album_one.get("thumb_path") is not None:
+                    filepath = os.path.join(config.thumb_path_dir, folder.get('folder_name'), album_one.get("filename"))
+                    folder["thumb_path"] = filepath
         return folder_list
     else:
         one = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {id}")
@@ -166,8 +185,12 @@ async def get_folders(id: int, is_lock: int):
 # 新增相册
 @router.get(f"{base_url}/add_album_folders")
 async def add_album_folders(album_name: str, ):
-    # 创建目标文件夹
+    # 创建目标相册
     target_folder = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, album_name)
+    os.makedirs(target_folder, exist_ok=True)
+
+    # 创建缩略图文件夹
+    target_folder = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, album_name)
     os.makedirs(target_folder, exist_ok=True)
 
     one = we_library.fetch_one(f"SELECT * FROM album_folders WHERE folder_name = ?;", (album_name,))
@@ -190,11 +213,14 @@ async def update_album_folder(req: BaseReq):
         "SELECT * FROM album_folders WHERE id = ?;",
         (req.id,)
     )
-    # 重命名物理文件夹
+    # 重命名相册
     old_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, one["folder_name"])
     new_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, req.new_name)
     os.rename(old_path, new_path)
-
+    # 重命名缩略图
+    old_thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, one["folder_name"])
+    new_thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, req.new_name)
+    os.rename(old_thumb_path, new_thumb_path)
     # 更新数据库记录
     do_folders = AlbumFolders(
         table_name="album_folders",  # 直接初始化字段值
@@ -248,6 +274,10 @@ async def delete_album_folder(id: int):
     folder_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, one["folder_name"])
     if os.path.exists(folder_path):
         shutil.rmtree(folder_path)  # 递归删除整个文件夹
+    # 删除缩略图
+    thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, one["folder_name"])
+    if os.path.exists(thumb_path):
+        shutil.rmtree(thumb_path)
     # 删除文件记录
     we_library.execute_query("DELETE FROM album WHERE folder_id=?;", (id,))
     # 删除相册记录
@@ -370,8 +400,13 @@ async def upload_file(file: UploadFile = File(...),
     with open(access_path, "wb") as buffer:
         while content := await file.read(1024 * 1024):  # 每次读取1MB
             buffer.write(content)
+    # 生成缩略图
+    thumb_path = None
+    if filetype in ['image', 'video']:
+        thumb_path = await file_util.thumbnail(filetype, access_path, folder_name, filename)
     # 序列化元数据
     json_str = json.dumps(exif_data, indent=4, ensure_ascii=False)
+
     # 插入数据库记录
     do_files = Album(
         table_name="album",  # 直接初始化字段值
@@ -384,6 +419,7 @@ async def upload_file(file: UploadFile = File(...),
         latitude=latitude,
         capture_time=capture_time,
         metadata=str(json_str),
+        thumb_path=thumb_path,
     )
     we_library.add_or_update(do_files, do_files.table_name)
     return {
@@ -391,15 +427,39 @@ async def upload_file(file: UploadFile = File(...),
     }
 
 
-# Pydantic模型
-class MapLocation(BaseModel):
-    longitude: float
-    latitude: float
-    count: int
+# 生成缩略图
+@router.get(f"{base_url}/generate_thumbnail")
+async def generate_thumbnail():
+    # 基础查询
+    base_query = "SELECT * FROM album"
+    params = []
+    # 添加排序（确保NULL值排在最后）
+    base_query += " ORDER BY capture_time DESC"
+    # 执行查询获取所有文件
+    all_files = we_library.fetch_all(base_query, tuple(params))
+    for file in all_files:
+        if file.get("thumb_path") is None:
+            folder_id = file.get("folder_id")
+            folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
+
+            filetype = file.get("filetype")
+            if filetype in ['image', 'video']:
+                thumb_path = await file_util.thumbnail(filetype, file.get("filepath"), folder.get('folder_name'),
+                                                       file.get("filename"))
+                if thumb_path is not None:
+                    do_files = Album(
+                        table_name="album",  # 直接初始化字段值
+                        id=file.get("id"),
+                        thumb_path=thumb_path,
+                    )
+                    we_library.add_or_update(do_files, do_files.table_name)
+    return {
+        "success": True,
+    }
 
 
 # 获取地图标记数据
-@router.get(f"{base_url}/map/locations", response_model=List[MapLocation])
+@router.get(f"{base_url}/map/locations")
 def get_map_locations():
     try:
         # 精度位数	物理范围	适用场景
@@ -417,7 +477,7 @@ def get_map_locations():
                     del_flag = 0
                   AND longitude IS NOT NULL
                   AND latitude IS NOT NULL
-                GROUP BY ROUND(longitude, {precision}), ROUND(latitude, {precision}) -- 同步修改
+                GROUP BY ROUND(longitude, {precision}), ROUND(latitude, {precision}) 
                 """
 
         results = we_library.fetch_all(query)
@@ -436,7 +496,11 @@ def get_map_locations():
 
 # 获取特定位置的图片
 @router.get(f"{base_url}/map/location/photos")
-def get_location_photos(longitude: float, latitude: float):
+def get_location_photos(longitude: float,
+                        latitude: float,
+                        page: int = Query(1, gt=0),  # 页码，从1开始，大于0
+                        page_size: int = Query(10, gt=0)  # 每页数量，大于0
+                        ):
     try:
         precision = 1
         # 构建查询SQL
@@ -445,11 +509,14 @@ def get_location_photos(longitude: float, latitude: float):
                 FROM album
                 WHERE del_flag = 0
                   AND ROUND(longitude, {precision}) = ROUND(?, {precision})
-                  AND ROUND(latitude, {precision}) = ROUND(?, {precision}) \
+                  AND ROUND(latitude, {precision}) = ROUND(?, {precision})
                 """
-
-        # 执行查询
         params = [longitude, latitude]
+        # 获取总记录数
+        total = we_library.fetch_count(query, tuple(params))
+        # 分页查询
+        query += " LIMIT ? OFFSET ?"
+        params.extend([page_size, (page - 1) * page_size])
         photos = we_library.fetch_all(query, params)
 
         # 转换日期格式为ISO格式
@@ -463,6 +530,12 @@ def get_location_photos(longitude: float, latitude: float):
             folder_id = file.get("folder_id")
             folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
             file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), file.get("filename"))
-        return photos
+            if file.get("thumb_path") is not None:
+                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), file.get("filename"))
+            else:
+                file["thumb_path"] = None
+        return {"success": True,
+                "photos": photos,
+                "total": total, }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

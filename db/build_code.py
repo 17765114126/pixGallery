@@ -54,7 +54,7 @@ def generate_class_from_table(table_name: str, db_path: str) -> Type[T]:
 
 
 if __name__ == '__main__':
-    db_path = os.path.join('..', 'db', 'we_library.db')
+    db_path = os.path.join('..', 'db', 'pix_gallery.db')
 
     table_list = ["album"]
     for table in table_list:

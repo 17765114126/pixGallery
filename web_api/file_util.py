@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import re
@@ -6,6 +7,9 @@ import ast
 from datetime import datetime
 
 import exifread
+from PIL import Image
+
+import config
 
 
 def format_windows_path(path):
@@ -255,3 +259,34 @@ def extract_important_metadata(exif_data):
             print(f"备用GPS解析错误: {e}")
     important['gps'] = gps_info
     return important
+
+
+# --- 缩略图生成 ---
+async def thumbnail(filetype: str, access_path: str, folder_name: str, filename: str):
+    try:
+        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_name)
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        thumb_path = os.path.join(folder_path, f"{filename}")
+        if filetype == 'image':
+            # 调用异步函数
+            await generate_thumbnail(access_path, thumb_path, 320)
+        # elif filetype == 'video':
+        # 使用ffmpeg生成视频缩略图（异步执行）
+        # await generate_video_thumbnail(access_path, thumb_path)
+        return thumb_path
+    except Exception as e:
+        print(f"缩略图生成失败: {e}, 文件: {access_path}")
+        return None
+
+
+async def generate_thumbnail(src_path: str, dest_path: str, width: int):
+    """同步函数：使用Pillow生成图片缩略图"""
+    with Image.open(src_path) as img:
+        # 计算等比例高度
+        w, h = img.size
+        height = int((width / w) * h)
+        # 生成缩略图
+        img.thumbnail((width, height))
+        # 保存缩略图（保留原始格式）
+        img.save(dest_path)

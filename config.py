@@ -18,9 +18,9 @@ ROOT_DIR = _get_executable_path()
 _root_path = Path(ROOT_DIR)
 
 source_img_dir = "static/album/"
+thumb_path_dir = "static/thumb/"
 
 api_host = 8686
-
 web_host = 8688
 
 lock_password = None

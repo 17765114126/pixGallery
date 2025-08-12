@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from db import SQLiteDB
 import os
 
-we_library = SQLiteDB.SQLiteDB(os.path.join('db', 'we_library.db'))
+we_library = SQLiteDB.SQLiteDB(os.path.join('db', 'pix_gallery.db'))
 
 
 class BaseReq(BaseModel):
@@ -140,6 +140,7 @@ class Album(BaseModel):
     create_time: Optional[str] = None
     capture_time: Optional[str] = None
     metadata: Optional[str] = None
+    thumb_path: Optional[str] = None
     # del_flag: Optional[bool] = 0
 
 class AlbumFolders(BaseModel):

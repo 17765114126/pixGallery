@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import logging
 import config,log_config
+from db import init_database
 
 from web_api.website_resource import router as resource_router
 from web_api.index import router as index_router, cache
@@ -73,6 +74,7 @@ def run():
     # 开启日志配置
     log_config.log_run()
     logging.info('------主程序开始运行-------')
+    init_database.init_database()
     uvicorn.run(app='run_api:app',
                 host="127.0.0.1",
                 port=config.api_host,
