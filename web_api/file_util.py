@@ -4,13 +4,14 @@ import subprocess
 import re
 import shutil
 import ast
-from datetime import datetime
-
+from datetime import datetime, timedelta
+import cv2
+from pydub import AudioSegment
 import exifread
 from PIL import Image
-
+from fastapi import HTTPException
 import config
-
+import io
 
 def format_windows_path(path):
     """安全格式化 Windows 路径"""
@@ -127,6 +128,27 @@ def check_folder(target_file):
     return True
 
 
+def get_file_type(filename):
+    # 支持的媒体文件扩展名
+    media_extensions = {
+        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'],
+        'video': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv'],
+        'audio': ['.mp3', '.wav', '.ogg', '.flac', '.aac']
+    }
+    # 检查文件类型
+    file_ext = os.path.splitext(filename)[1].lower()
+    filetype = None
+
+    for category, exts in media_extensions.items():
+        if file_ext in exts:
+            filetype = category
+            break
+
+    if not filetype:
+        raise HTTPException(400, "不支持的文件类型")
+    return filetype
+
+
 def clean_upload_dir(clean_dir):
     """清空上传目录"""
     try:
@@ -180,6 +202,28 @@ def update_value(key: str, value):
     except FileNotFoundError:
         with open('config.py', 'w') as f:
             f.write(f"{key} = {repr(value)}")
+
+
+def get_img_info(file_read):
+    # 尝试提取 图片EXIF，经纬度和文件创建时间
+    # 初始化元数据变量
+    longitude, latitude = None, None
+    capture_time = None
+    exif_data = {}
+    try:
+        file_stream = io.BytesIO(file_read)
+        exif_data = extract_exif(file_stream)
+        important_metadata = extract_important_metadata(exif_data)
+
+        # 提取GPS和拍摄时间
+        if 'gps' in important_metadata and important_metadata['gps']:
+            longitude = important_metadata['gps'].get('longitude')
+            latitude = important_metadata['gps'].get('latitude')
+
+        capture_time = important_metadata['timestamps'].get('capture')
+    except Exception as e:
+        print(f"EXIF提取失败: {e}")
+    return exif_data,capture_time,longitude,latitude
 
 
 def extract_exif(file_stream):
@@ -262,31 +306,105 @@ def extract_important_metadata(exif_data):
 
 
 # --- 缩略图生成 ---
-async def thumbnail(filetype: str, access_path: str, folder_name: str, filename: str):
-    try:
-        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_name)
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+async def thumbnail(filetype: str, access_path: str, folder_path: str, filename: str):
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+    thumb_path = ""
+    if filetype == 'image':
         thumb_path = os.path.join(folder_path, f"{filename}")
-        if filetype == 'image':
-            # 调用异步函数
-            await generate_thumbnail(access_path, thumb_path, 320)
-        # elif filetype == 'video':
-        # 使用ffmpeg生成视频缩略图（异步执行）
-        # await generate_video_thumbnail(access_path, thumb_path)
-        return thumb_path
-    except Exception as e:
-        print(f"缩略图生成失败: {e}, 文件: {access_path}")
-        return None
+        # 生成图片缩略图（异步执行）
+        await generate_thumbnail(access_path, thumb_path)
+    elif filetype == 'video':
+        thumb_path = os.path.join(folder_path, f"{get_file_name_no_suffix(filename)}.jpg")
+        # 生成视频缩略图（异步执行）
+        await generate_video_thumbnail(access_path, thumb_path)
+    return thumb_path
 
 
-async def generate_thumbnail(src_path: str, dest_path: str, width: int):
+async def generate_thumbnail(src_path: str, dest_path: str):
     """同步函数：使用Pillow生成图片缩略图"""
     with Image.open(src_path) as img:
         # 计算等比例高度
         w, h = img.size
-        height = int((width / w) * h)
+        height = int((320 / w) * h)
         # 生成缩略图
-        img.thumbnail((width, height))
+        img.thumbnail((320, height))
         # 保存缩略图（保留原始格式）
         img.save(dest_path)
+
+
+async def generate_video_thumbnail(video_path: str, thumb_path: str):
+    """
+    异步生成视频缩略图（第一帧）
+    :param video_path: 视频文件路径
+    :param thumb_path: 缩略图保存路径
+    """
+    loop = asyncio.get_running_loop()
+
+    # 内部同步函数
+    def _extract_frame():
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise IOError(f"无法打开视频文件: {video_path}")
+
+        success, frame = cap.read()
+        cap.release()
+
+        if not success:
+            raise RuntimeError(f"无法读取视频帧: {video_path}")
+
+        # 调整大小 (宽度320，高度按比例)
+        h, w = frame.shape[:2]
+        new_height = int(320 * h / w)
+        resized_frame = cv2.resize(frame, (320, new_height))
+
+        # 保存缩略图（解决中文路径问题）
+        resized_frame_rgb = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(resized_frame_rgb)
+        # 使用 PIL 保存（支持中文路径）
+        pil_image.save(thumb_path)
+
+    # 在线程池中执行阻塞操作
+    await loop.run_in_executor(None, _extract_frame)
+
+
+def get_video_duration(video_path):
+    """使用OpenCV获取视频时长（秒）"""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError("无法打开视频文件")
+
+    # 获取帧率和总帧数
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+
+    # 验证有效性
+    if fps <= 0 or total_frames <= 0:
+        # 备选方案：逐帧计数
+        cap = cv2.VideoCapture(video_path)
+        total_frames = 0
+        while True:
+            ret = cap.grab()  # 快速抓取帧（不解码）
+            if not ret:
+                break
+            total_frames += 1
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30  # 默认30fps
+        cap.release()
+
+    duration = total_frames / fps
+    formatted = str(timedelta(seconds=int(duration)))
+    return formatted
+
+
+def get_audio_duration(audio_path):
+    """获取音频时长（秒）"""
+    # 检查文件是否存在
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"文件不存在: {audio_path}")
+
+    # 加载音频文件
+    audio = AudioSegment.from_file(audio_path)
+    duration = len(audio) / 1000.0  # 毫秒转秒
+    formatted = str(timedelta(seconds=int(duration)))
+    return formatted

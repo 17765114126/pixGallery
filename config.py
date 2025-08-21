@@ -19,7 +19,7 @@ _root_path = Path(ROOT_DIR)
 
 source_img_dir = "static/album/"
 thumb_path_dir = "static/thumb/"
-
+thumb_path_external_dir = "static/thumb/external"
 api_host = 8686
 web_host = 8688
 

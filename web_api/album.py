@@ -6,8 +6,8 @@ from web_api import file_util
 import os
 import config
 import shutil
-import io
 import datetime
+import aiofiles
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ base_url = "/album"
 @router.post(f"{base_url}/list")
 async def get_files(req: BaseReq):
     # 获取非锁定文件夹ID列表
-    is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0", tuple([]))
+    is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0 and del_flag = 0", tuple([]))
     folder_ids = [item['id'] for item in is_lock_folders]
     # 基础查询
     base_query = "SELECT * FROM album"
@@ -40,6 +40,8 @@ async def get_files(req: BaseReq):
         placeholders = ",".join(["?"] * len(folder_ids))
         conditions.append(f"folder_id IN ({placeholders})")
         params.extend(folder_ids)
+    conditions.append("del_flag = ?")
+    params.append(0)
     # 构建WHERE子句
     if conditions:
         base_query += " WHERE " + " AND ".join(conditions)
@@ -51,10 +53,20 @@ async def get_files(req: BaseReq):
     grouped_files = {}
     for file in all_files:
         folder_id = file.get("folder_id")
+        filename = file.get("filename")
         folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-        file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), file.get("filename"))
+        file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
         if file.get("thumb_path") is not None:
-            file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), file.get("filename"))
+            if folder["is_external"] == 1:
+                thumb_folder = os.path.join(config.thumb_path_external_dir, folder.get('folder_name'))
+            else:
+                thumb_folder = os.path.join(config.thumb_path_dir, folder.get('folder_name'))
+
+            if file.get("filetype") == "video":
+                file["thumb_path"] = os.path.join(thumb_folder,
+                                                  f"{file_util.get_file_name_no_suffix(filename)}.jpg")
+            if file.get("filetype") == "image":
+                file["thumb_path"] = os.path.join(thumb_folder, filename)
         else:
             file["thumb_path"] = None
         # 处理capture_time为null的情况
@@ -115,9 +127,9 @@ async def update_album(ids: str, folder_id: int):
         # 将文件移动至新相册
         shutil.move(old_file_path, new_file_path)
         old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, old_folder["folder_name"],
-                                     one["filename"])
+                                           one["filename"])
         new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
-                                     one["filename"])
+                                           one["filename"])
         # 将缩略图移动至新相册
         shutil.move(old_thumb_path_path, new_thumb_path_path)
         # 更新数据库记录
@@ -135,26 +147,40 @@ async def update_album(ids: str, folder_id: int):
 async def del_album(ids: str):
     id_list = ids.split(",")
     for id in id_list:
-        # 查询文件
-        one = we_library.fetch_one(
-            "SELECT * FROM album WHERE id = ?;",
-            (id,)
-        )
-        folder_id = one.get("folder_id")
+        # 删除数据库记录
+        we_library.execute_query("UPDATE del_flag FROM album WHERE id=?;", (id,))
+    return {"success": True, "message": f"删除成功"}
+
+# 清空回收站
+@router.get(f"{base_url}/clear_recycle_bin")
+async def clear_recycle_bin():
+    # 查询文件
+    all_album = we_library.fetch_all(
+        "SELECT * FROM album WHERE del_flag = 1;"
+    )
+    for album in all_album:
+        folder_id = album.get("folder_id")
         folder_one = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
         try:
+            if folder_one["is_external"] == 0:
+                file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"],
+                                         album["filename"])
+                thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_one["folder_name"],
+                                          album["filename"])
+            elif folder_one["is_external"] == 1:
+                file_path = os.path.join(folder_one["folder_name"], album["filename"])
+                thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir, folder_one["folder_name"],
+                                          album["filename"])
             # 删除物理文件
-            file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"],
-                                     one["filename"])
             os.remove(file_path)
             # 删除缩略图
-            thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_one["folder_name"],
-                                     one["filename"])
             os.remove(thumb_path)
         except Exception as e:
             print("Error:", e)
-        # 删除数据库记录
-        we_library.execute_query("DELETE FROM album WHERE id=?;", (id,))
+    # 删除文件记录
+    we_library.execute_query("DELETE FROM album where del_flag = 1;", )
+    # 删除相册记录
+    we_library.execute_query("DELETE FROM album_folders where del_flag = 1;")
     return {"success": True, "message": f"删除成功"}
 
 
@@ -163,18 +189,22 @@ async def del_album(ids: str):
 async def get_folders(id: int, is_lock: int):
     if id == -1:
         # 如果传-1则查询全部
-        folder_list = we_library.fetch_all(f"SELECT * FROM album_folders WHERE is_lock = {is_lock}")
+        folder_list = we_library.fetch_all(f"SELECT * FROM album_folders WHERE is_lock = {is_lock} and del_flag = 0")
         for folder in folder_list:
             folder_id = folder.get("id")
-            album_count = we_library.fetch_all(f"SELECT count(*) FROM album where folder_id = {folder_id}")
+            album_count = we_library.fetch_all(f"SELECT count(*) FROM album where folder_id = {folder_id} and del_flag = 0")
             folder["file_count"] = album_count[0].get("count(*)")
             album_one = we_library.fetch_one(
-                "SELECT * FROM album WHERE filetype = ? and folder_id = ? LIMIT 1;",
-                ("image",folder_id,)
+                "SELECT * FROM album WHERE filetype = ? and folder_id = ? and del_flag = 0 LIMIT 1;",
+                ("image", folder_id,)
             )
             if album_one:
                 if album_one.get("thumb_path") is not None:
-                    filepath = os.path.join(config.thumb_path_dir, folder.get('folder_name'), album_one.get("filename"))
+                    if folder["is_external"] == 1:
+                        thumb_folder = os.path.join(config.thumb_path_external_dir, folder.get('folder_name'))
+                    else:
+                        thumb_folder = os.path.join(config.thumb_path_dir, folder.get('folder_name'))
+                    filepath = os.path.join(thumb_folder, album_one.get("filename"))
                     folder["thumb_path"] = filepath
         return folder_list
     else:
@@ -323,52 +353,25 @@ async def upload_file(file: UploadFile = File(...),
                       folder_id: int = Form(...),
                       folder_name: str = Form(...),
                       last_modified_time: str = Form(...)):
+    # 提取纯文件名
+    filename = os.path.basename(file.filename)
+    # filetype获取
+    filetype = file_util.get_file_type(filename)
+
     # 读取文件内容
     file_read = await file.read()
-    # 提取纯文件名
-    filename = os.path.basename(file.filename)  # 关键修改
+    # 获取文件大小
     file_size = len(file_read)
-    # 支持的媒体文件扩展名
-    media_extensions = {
-        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'],
-        'video': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv'],
-        'audio': ['.mp3', '.wav', '.ogg', '.flac', '.aac']
-    }
-    # 检查文件类型
-    file_ext = os.path.splitext(filename)[1].lower()
-    filetype = None
-
-    for category, exts in media_extensions.items():
-        if file_ext in exts:
-            filetype = category
-            break
-
-    if not filetype:
-        raise HTTPException(400, "不支持的文件类型")
-
     # 初始化元数据变量
     longitude, latitude = None, None
-    capture_time = None
     exif_data = {}
 
-    # 仅当图片文件时尝试提取EXIF
+    # 仅当图片文件时尝试提取EXIF，经纬度和文件创建时间
     if filetype == 'image':
-        try:
-            file_stream = io.BytesIO(file_read)
-            exif_data = file_util.extract_exif(file_stream)
-            important_metadata = file_util.extract_important_metadata(exif_data)
-
-            # 提取GPS和拍摄时间
-            if 'gps' in important_metadata and important_metadata['gps']:
-                longitude = important_metadata['gps'].get('longitude')
-                latitude = important_metadata['gps'].get('latitude')
-
-            capture_time = important_metadata['timestamps'].get('capture')
-            # 当拍摄时间不存在赋值将前端传过来的文件创建时间
-            if capture_time is None:
-                capture_time = last_modified_time
-        except Exception as e:
-            print(f"EXIF提取失败: {e}")
+        exif_data, capture_time, longitude, latitude = file_util.get_img_info(file_read)
+        # 当拍摄时间不存在赋值将前端传过来的文件创建时间
+        if capture_time is None:
+            capture_time = last_modified_time
     else:
         capture_time = last_modified_time
     # 查询相册是否存在
@@ -376,6 +379,8 @@ async def upload_file(file: UploadFile = File(...),
         folder_one = we_library.fetch_one(
             "SELECT * FROM album_folders WHERE folder_name = ?;",
             (folder_name,))
+        if folder_one is not None:
+            folder_id = folder_one["id"]
         if folder_one is None:
             folders_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name)
             os.makedirs(folders_path, exist_ok=True)
@@ -384,8 +389,7 @@ async def upload_file(file: UploadFile = File(...),
                 folder_name=folder_name
             )
             folder_id = we_library.add_or_update(do_album_folders, do_album_folders.table_name)
-        if folder_one is not None:
-            folder_id = folder_one["id"]
+
     else:
         folder_one = we_library.fetch_one(
             "SELECT * FROM album_folders WHERE id = ?;",
@@ -393,17 +397,28 @@ async def upload_file(file: UploadFile = File(...),
         )
         folder_name = folder_one["folder_name"]
 
-    access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, filename)
-    access_path = os.path.normpath(access_path)  # 修复斜杠问题
+    if folder_one["is_external"] == 0:
+        access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, filename)
+        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir,folder_name)
+    else:
+        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder_name)
+        access_path = os.path.join(folder_one["external_path"],filename)
     # 分块写入文件（适合大文件）
     await file.seek(0)  # 重置文件指针到开头
     with open(access_path, "wb") as buffer:
         while content := await file.read(1024 * 1024):  # 每次读取1MB
             buffer.write(content)
-    # 生成缩略图
+    duration = "00:00:00"
     thumb_path = None
     if filetype in ['image', 'video']:
-        thumb_path = await file_util.thumbnail(filetype, access_path, folder_name, filename)
+        # 生成缩略图
+        thumb_path = await file_util.thumbnail(filetype, access_path, folder_path, filename)
+    if filetype == 'video':
+        # 获取video时长
+        duration = file_util.get_video_duration(access_path)
+    if filetype == 'audio':
+        # 获取audio时长
+        duration = file_util.get_audio_duration(access_path)
     # 序列化元数据
     json_str = json.dumps(exif_data, indent=4, ensure_ascii=False)
 
@@ -414,6 +429,7 @@ async def upload_file(file: UploadFile = File(...),
         filename=filename,
         filepath=str(access_path),
         filesize=file_size,
+        duration=duration,
         filetype=filetype,
         longitude=longitude,
         latitude=latitude,
@@ -424,14 +440,110 @@ async def upload_file(file: UploadFile = File(...),
     we_library.add_or_update(do_files, do_files.table_name)
     return {
         "success": True,
+        "message": f"操作成功"
     }
 
+
+# 外部文件导入
+@router.post(f"{base_url}/external_file")
+async def external_file(req: BaseReq):
+    external_path = req.external_path
+    # 验证路径是否存在
+    if not os.path.exists(external_path):
+        raise HTTPException(status_code=404, detail="指定的路径不存在")
+
+    # 验证路径是否为文件夹
+    if not os.path.isdir(external_path):
+        raise HTTPException(external_path=400, detail="提供的路径不是一个文件夹")
+
+    # 获取文件夹名称 (路径的最后一部分)
+    folder_name = os.path.basename(os.path.normpath(external_path))
+
+    folder_one = we_library.fetch_one(
+        "SELECT * FROM album_folders WHERE external_path = ? Limit 1;",
+        (external_path,)
+    )
+    if folder_one is not None:
+        folder_id = folder_one["id"]
+    else:
+        do_album_folders = AlbumFolders(
+            table_name="album_folders",
+            folder_name=folder_name,
+            external_path=external_path,
+            is_external=1
+        )
+        folder_id = we_library.add_or_update(do_album_folders, do_album_folders.table_name)
+    for entry in os.listdir(external_path):
+        entry_path = os.path.join(external_path, entry)
+        access_path = str(entry_path)
+        folder_one = we_library.fetch_one(
+            "SELECT * FROM album WHERE folder_id = ? and filepath = ? Limit 1;",
+            (folder_id, access_path,)
+        )
+        if folder_one is not None:
+            continue
+        if os.path.isfile(entry_path):
+            # 提取纯文件名
+            filename = os.path.basename(entry)
+            # filetype获取
+            filetype = file_util.get_file_type(filename)
+            # 读取文件内容
+            async with aiofiles.open(entry_path, 'rb') as f:
+                file_read = await f.read()
+            # 获取文件大小
+            file_size = len(file_read)
+            # 初始化元数据变量
+            longitude, latitude = None, None
+            exif_data = {}
+            # 仅当图片文件时尝试提取EXIF，经纬度和文件创建时间
+            if filetype == 'image':
+                exif_data, capture_time, longitude, latitude = file_util.get_img_info(file_read)
+                # # 当拍摄时间不存在赋值将前端传过来的文件创建时间
+                if capture_time is None:
+                    # capture_time = last_modified_time
+                    capture_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                capture_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            duration = "00:00:00"
+            thumb_path = None
+            if filetype in ['image', 'video']:
+                folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder_name)
+                # 生成缩略图
+                thumb_path = await file_util.thumbnail(filetype, access_path, folder_path, filename,)
+            if filetype == 'video':
+                # 获取video时长
+                duration = file_util.get_video_duration(access_path)
+            if filetype == 'audio':
+                # 获取audio时长
+                duration = file_util.get_audio_duration(access_path)
+            # 序列化元数据
+            json_str = json.dumps(exif_data, indent=4, ensure_ascii=False)
+            # 插入数据库记录
+            do_files = Album(
+                table_name="album",  # 直接初始化字段值
+                folder_id=folder_id,
+                filename=filename,
+                filepath=access_path,
+                filesize=file_size,
+                duration=duration,
+                filetype=filetype,
+                longitude=longitude,
+                latitude=latitude,
+                capture_time=capture_time,
+                metadata=str(json_str),
+                thumb_path=thumb_path,
+            )
+            we_library.add_or_update(do_files, do_files.table_name)
+    return {
+        "success": True,
+        "message": f"操作成功"
+    }
 
 # 生成缩略图
 @router.get(f"{base_url}/generate_thumbnail")
 async def generate_thumbnail():
     # 基础查询
-    base_query = "SELECT * FROM album"
+    base_query = "SELECT * FROM album where del_flag = 0"
     params = []
     # 添加排序（确保NULL值排在最后）
     base_query += " ORDER BY capture_time DESC"
@@ -444,7 +556,12 @@ async def generate_thumbnail():
 
             filetype = file.get("filetype")
             if filetype in ['image', 'video']:
-                thumb_path = await file_util.thumbnail(filetype, file.get("filepath"), folder.get('folder_name'),
+                if folder["is_external"] == 0:
+                    folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir,folder["is_external"])
+                else:
+                    folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder["folder_name"])
+
+                thumb_path = await file_util.thumbnail(filetype, file.get("filepath"), folder_path,
                                                        file.get("filename"))
                 if thumb_path is not None:
                     do_files = Album(
@@ -501,41 +618,43 @@ def get_location_photos(longitude: float,
                         page: int = Query(1, gt=0),  # 页码，从1开始，大于0
                         page_size: int = Query(10, gt=0)  # 每页数量，大于0
                         ):
-    try:
-        precision = 1
-        # 构建查询SQL
-        query = f"""
-                SELECT *
-                FROM album
-                WHERE del_flag = 0
-                  AND ROUND(longitude, {precision}) = ROUND(?, {precision})
-                  AND ROUND(latitude, {precision}) = ROUND(?, {precision})
-                """
-        params = [longitude, latitude]
-        # 获取总记录数
-        total = we_library.fetch_count(query, tuple(params))
-        # 分页查询
-        query += " LIMIT ? OFFSET ?"
-        params.extend([page_size, (page - 1) * page_size])
-        photos = we_library.fetch_all(query, params)
+    precision = 1
+    # 构建查询SQL
+    query = f"""
+            SELECT *
+            FROM album
+            WHERE del_flag = 0
+              AND ROUND(longitude, {precision}) = ROUND(?, {precision})
+              AND ROUND(latitude, {precision}) = ROUND(?, {precision})
+            """
+    params = [longitude, latitude]
+    # 获取总记录数
+    total = we_library.fetch_count(query, tuple(params))
+    # 分页查询
+    query += " LIMIT ? OFFSET ?"
+    params.extend([page_size, (page - 1) * page_size])
+    photos = we_library.fetch_all(query, params)
 
-        # 转换日期格式为ISO格式
-        for photo in photos:
-            if "create_time" in photo and photo["create_time"]:
-                photo["create_time"] = datetime.datetime.strptime(photo["create_time"], "%Y-%m-%d %H:%M:%S").isoformat()
-            if "file_create_time" in photo and photo["file_create_time"]:
-                photo["file_create_time"] = datetime.datetime.strptime(photo["file_create_time"],
-                                                                       "%Y-%m-%d %H:%M:%S").isoformat()
-        for file in photos:
-            folder_id = file.get("folder_id")
-            folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-            file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), file.get("filename"))
-            if file.get("thumb_path") is not None:
-                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), file.get("filename"))
-            else:
-                file["thumb_path"] = None
-        return {"success": True,
-                "photos": photos,
-                "total": total, }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 转换日期格式为ISO格式
+    for photo in photos:
+        if "create_time" in photo and photo["create_time"]:
+            photo["create_time"] = datetime.datetime.strptime(photo["create_time"], "%Y-%m-%d %H:%M:%S").isoformat()
+        if "file_create_time" in photo and photo["file_create_time"]:
+            photo["file_create_time"] = datetime.datetime.strptime(photo["file_create_time"],
+                                                                   "%Y-%m-%d %H:%M:%S").isoformat()
+    for file in photos:
+        folder_id = file.get("folder_id")
+        filename = file.get("filename")
+        folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
+        file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
+        if file.get("thumb_path") is not None:
+            if file.get("filetype") == "video":
+                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'),
+                                                  f"{file_util.get_file_name_no_suffix(filename)}.jpg")
+            if file.get("filetype") == "image":
+                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), filename)
+        else:
+            file["thumb_path"] = None
+    return {"success": True,
+            "photos": photos,
+            "total": total, }

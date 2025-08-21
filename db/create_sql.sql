@@ -14,17 +14,21 @@ create table album
     capture_time TIMESTAMP default NULL,
     metadata     TEXT,
     thumb_path   TEXT,
+    duration     TEXT      default "00:00:00",
     check (filetype IN ('image', 'video', 'audio'))
 );
 
 create table album_folders
 (
-    id          INTEGER
+    id            INTEGER
         primary key autoincrement,
-    folder_name TEXT not null
+    folder_name   TEXT not null
         unique,
-    create_time TIMESTAMP default CURRENT_TIMESTAMP,
-    is_lock     TINYINT   default 0
+    create_time   TIMESTAMP default CURRENT_TIMESTAMP,
+    is_lock       TINYINT   default 0,
+    external_path TEXT,
+    is_external   int       default 0,
+    del_flag      INT       default 0
 );
 
 create table comment

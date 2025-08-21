@@ -28,6 +28,24 @@ app.include_router(album_router)
 app.include_router(website_title_router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+from db.Do import BaseReq, we_library
+import os
+# 动态挂载外部相册
+def mount_external_albums():
+    album_folders = we_library.fetch_all("SELECT * FROM album_folders where is_external = 1")
+    for album in album_folders:
+        external_path = album['external_path']
+        if os.path.exists(external_path):
+            # 创建虚拟路径 /external/{album_id}
+            app.mount(
+                f"/external/{album['id']}",
+                StaticFiles(directory=external_path),
+                name=f"external_album_{album['id']}"
+            )
+# 启动时挂载外部目录
+mount_external_albums()
+
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,

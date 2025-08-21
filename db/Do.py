@@ -134,6 +134,7 @@ class Album(BaseModel):
     filename: Optional[str] = None
     filepath: Optional[str] = None
     filesize: Optional[int] = None
+    duration: Optional[str] = None
     filetype: Optional[str] = None
     longitude: Optional[float] = None
     latitude: Optional[float] = None
@@ -149,3 +150,5 @@ class AlbumFolders(BaseModel):
     folder_name: Optional[str] = None
     create_time: Optional[str] = None
     is_lock: Optional[int] = None
+    external_path: Optional[str] = None
+    is_external: Optional[int] = None

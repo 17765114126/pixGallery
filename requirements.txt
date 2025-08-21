@@ -1,8 +1,11 @@
-uvicorn==0.32.0
-fastapi==0.115.4
+uvicorn
+fastapi
 requests
 pydantic
 cachetools
 python-multipart
 Pillow
 exifread
+opencv-python
+pydub
+aiofiles
