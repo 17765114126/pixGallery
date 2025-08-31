@@ -8,6 +8,7 @@ import config
 import shutil
 import datetime
 import aiofiles
+from pathlib import Path
 
 router = APIRouter()
 
@@ -17,7 +18,8 @@ base_url = "/album"
 @router.post(f"{base_url}/list")
 async def get_files(req: BaseReq):
     # 获取非锁定文件夹ID列表
-    is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0 and del_flag = 0", tuple([]))
+    is_lock_folders = we_library.fetch_all(f"SELECT id FROM album_folders WHERE is_lock = 0 and del_flag = 0",
+                                           tuple([]))
     folder_ids = [item['id'] for item in is_lock_folders]
     # 基础查询
     base_query = "SELECT * FROM album"
@@ -41,7 +43,10 @@ async def get_files(req: BaseReq):
         conditions.append(f"folder_id IN ({placeholders})")
         params.extend(folder_ids)
     conditions.append("del_flag = ?")
-    params.append(0)
+    if req.is_recycle:
+        params.append(1)
+    else:
+        params.append(0)
     # 构建WHERE子句
     if conditions:
         base_query += " WHERE " + " AND ".join(conditions)
@@ -55,7 +60,10 @@ async def get_files(req: BaseReq):
         folder_id = file.get("folder_id")
         filename = file.get("filename")
         folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-        file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
+        if folder["is_external"] == 1:
+            file["filepath"] = os.path.join("external", str(folder.get('id')), filename)
+        else:
+            file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
         if file.get("thumb_path") is not None:
             if folder["is_external"] == 1:
                 thumb_folder = os.path.join(config.thumb_path_external_dir, folder.get('folder_name'))
@@ -64,9 +72,9 @@ async def get_files(req: BaseReq):
 
             if file.get("filetype") == "video":
                 file["thumb_path"] = os.path.join(thumb_folder,
-                                                  f"{file_util.get_file_name_no_suffix(filename)}.jpg")
+                                                  file["thumb_path"])
             if file.get("filetype") == "image":
-                file["thumb_path"] = os.path.join(thumb_folder, filename)
+                file["thumb_path"] = os.path.join(thumb_folder, file["thumb_path"])
         else:
             file["thumb_path"] = None
         # 处理capture_time为null的情况
@@ -118,25 +126,31 @@ async def update_album(ids: str, folder_id: int):
         )
         old_folder_id = one.get("folder_id")
         old_folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {old_folder_id}")
+
+        # 将文件移动至新相册
         old_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, old_folder["folder_name"],
                                      one["filename"])
-
         new_folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
         new_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, new_folder["folder_name"],
                                      one["filename"])
-        # 将文件移动至新相册
-        shutil.move(old_file_path, new_file_path)
-        old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, old_folder["folder_name"],
-                                           one["filename"])
-        new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
-                                           one["filename"])
+        shutil.move(Path(old_file_path), Path(new_file_path))
+
         # 将缩略图移动至新相册
-        shutil.move(old_thumb_path_path, new_thumb_path_path)
+        if new_folder["is_external"] == 0:
+            old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
+                                               one["thumb_path"])
+        elif new_folder["is_external"] == 1:
+            old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,
+                                               new_folder["folder_name"],
+                                               one["thumb_path"])
+        new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
+                                           one["thumb_path"])
+        shutil.move(Path(old_thumb_path_path), Path(new_thumb_path_path))
         # 更新数据库记录
         do_album = Album(
             table_name="album",  # 直接初始化字段值
             id=id,
-            folder_id=folder_id
+            folder_id=folder_id,
         )
         we_library.add_or_update(do_album, do_album.table_name)
     return {"success": True, "message": f"操作成功"}
@@ -148,8 +162,19 @@ async def del_album(ids: str):
     id_list = ids.split(",")
     for id in id_list:
         # 删除数据库记录
-        we_library.execute_query("UPDATE del_flag FROM album WHERE id=?;", (id,))
+        we_library.execute_query(f"UPDATE album SET del_flag = 1 WHERE id = {id};")
     return {"success": True, "message": f"删除成功"}
+
+
+# 还原文件
+@router.get(f"{base_url}/restore_album")
+async def del_album(ids: str):
+    id_list = ids.split(",")
+    for id in id_list:
+        # 还原数据库记录
+        we_library.execute_query(f"UPDATE album SET del_flag = 0 WHERE id = {id};")
+    return {"success": True, "message": f"还原成功"}
+
 
 # 清空回收站
 @router.get(f"{base_url}/clear_recycle_bin")
@@ -166,11 +191,12 @@ async def clear_recycle_bin():
                 file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_one["folder_name"],
                                          album["filename"])
                 thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_one["folder_name"],
-                                          album["filename"])
+                                          album["thumb_path"])
             elif folder_one["is_external"] == 1:
-                file_path = os.path.join(folder_one["folder_name"], album["filename"])
-                thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir, folder_one["folder_name"],
-                                          album["filename"])
+                file_path = os.path.join(folder_one["external_path"], album["filename"])
+                thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,
+                                          folder_one["folder_name"],
+                                          album["thumb_path"])
             # 删除物理文件
             os.remove(file_path)
             # 删除缩略图
@@ -192,7 +218,8 @@ async def get_folders(id: int, is_lock: int):
         folder_list = we_library.fetch_all(f"SELECT * FROM album_folders WHERE is_lock = {is_lock} and del_flag = 0")
         for folder in folder_list:
             folder_id = folder.get("id")
-            album_count = we_library.fetch_all(f"SELECT count(*) FROM album where folder_id = {folder_id} and del_flag = 0")
+            album_count = we_library.fetch_all(
+                f"SELECT count(*) FROM album where folder_id = {folder_id} and del_flag = 0")
             folder["file_count"] = album_count[0].get("count(*)")
             album_one = we_library.fetch_one(
                 "SELECT * FROM album WHERE filetype = ? and folder_id = ? and del_flag = 0 LIMIT 1;",
@@ -204,7 +231,7 @@ async def get_folders(id: int, is_lock: int):
                         thumb_folder = os.path.join(config.thumb_path_external_dir, folder.get('folder_name'))
                     else:
                         thumb_folder = os.path.join(config.thumb_path_dir, folder.get('folder_name'))
-                    filepath = os.path.join(thumb_folder, album_one.get("filename"))
+                    filepath = os.path.join(thumb_folder, album_one.get("thumb_path"))
                     folder["thumb_path"] = filepath
         return folder_list
     else:
@@ -225,11 +252,13 @@ async def add_album_folders(album_name: str, ):
 
     one = we_library.fetch_one(f"SELECT * FROM album_folders WHERE folder_name = ?;", (album_name,))
     if one is None:
+        external_path = os.path.join(config.source_img_dir, album_name)
         # 添加文件夹记录
         # 创建 AlbumFolders 实例
         do_folders = AlbumFolders(
             table_name="album_folders",  # 直接初始化字段值
-            folder_name=album_name
+            folder_name=album_name,
+            external_path=external_path,
         )
         we_library.add_or_update(do_folders, do_folders.table_name)
     return True
@@ -251,11 +280,13 @@ async def update_album_folder(req: BaseReq):
     old_thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, one["folder_name"])
     new_thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, req.new_name)
     os.rename(old_thumb_path, new_thumb_path)
+    external_path = os.path.join(config.source_img_dir, req.new_name)
     # 更新数据库记录
     do_folders = AlbumFolders(
         table_name="album_folders",  # 直接初始化字段值
         id=req.id,
-        folder_name=req.new_name
+        folder_name=req.new_name,
+        external_path=external_path,
     )
     we_library.add_or_update(do_folders, do_folders.table_name)
     return {"status": "success", "message": f"修改成功"}
@@ -305,7 +336,10 @@ async def delete_album_folder(id: int):
     if os.path.exists(folder_path):
         shutil.rmtree(folder_path)  # 递归删除整个文件夹
     # 删除缩略图
-    thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, one["folder_name"])
+    if one["is_external"] == 1:
+        thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir, one["folder_name"])
+    else:
+        thumb_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, one["folder_name"])
     if os.path.exists(thumb_path):
         shutil.rmtree(thumb_path)
     # 删除文件记录
@@ -313,6 +347,26 @@ async def delete_album_folder(id: int):
     # 删除相册记录
     we_library.execute_query("DELETE FROM album_folders WHERE id=?;", (id,))
     return {"status": "success", "message": f"已删除"}
+
+
+# 打开相册文件夹
+@router.get(f"{base_url}/open_folder")
+async def open_folder(id: int):
+    # 查询相册
+    one = we_library.fetch_one(
+        "SELECT * FROM album_folders WHERE id = ?;",
+        (id,)
+    )
+    if one is None:
+        return False
+    if one["is_external"] == 0:
+        external_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, one["folder_name"])
+        external_path = Path(external_path)
+    else:
+        external_path = one["external_path"]
+    # 打开文件夹
+    file_util.open_folder(external_path)
+    return True
 
 
 # 判断是否未设置密码
@@ -384,9 +438,11 @@ async def upload_file(file: UploadFile = File(...),
         if folder_one is None:
             folders_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name)
             os.makedirs(folders_path, exist_ok=True)
+            external_path = os.path.join(config.source_img_dir, folder_name)
             do_album_folders = AlbumFolders(
                 table_name="album_folders",
-                folder_name=folder_name
+                folder_name=folder_name,
+                external_path=external_path,
             )
             folder_id = we_library.add_or_update(do_album_folders, do_album_folders.table_name)
 
@@ -399,10 +455,10 @@ async def upload_file(file: UploadFile = File(...),
 
     if folder_one["is_external"] == 0:
         access_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, folder_name, filename)
-        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir,folder_name)
+        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, folder_name)
     else:
-        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder_name)
-        access_path = os.path.join(folder_one["external_path"],filename)
+        folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir, folder_name)
+        access_path = os.path.join(folder_one["external_path"], filename)
     # 分块写入文件（适合大文件）
     await file.seek(0)  # 重置文件指针到开头
     with open(access_path, "wb") as buffer:
@@ -507,9 +563,9 @@ async def external_file(req: BaseReq):
             duration = "00:00:00"
             thumb_path = None
             if filetype in ['image', 'video']:
-                folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder_name)
+                folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir, folder_name)
                 # 生成缩略图
-                thumb_path = await file_util.thumbnail(filetype, access_path, folder_path, filename,)
+                thumb_path = await file_util.thumbnail(filetype, access_path, folder_path, filename, )
             if filetype == 'video':
                 # 获取video时长
                 duration = file_util.get_video_duration(access_path)
@@ -537,41 +593,6 @@ async def external_file(req: BaseReq):
     return {
         "success": True,
         "message": f"操作成功"
-    }
-
-# 生成缩略图
-@router.get(f"{base_url}/generate_thumbnail")
-async def generate_thumbnail():
-    # 基础查询
-    base_query = "SELECT * FROM album where del_flag = 0"
-    params = []
-    # 添加排序（确保NULL值排在最后）
-    base_query += " ORDER BY capture_time DESC"
-    # 执行查询获取所有文件
-    all_files = we_library.fetch_all(base_query, tuple(params))
-    for file in all_files:
-        if file.get("thumb_path") is None:
-            folder_id = file.get("folder_id")
-            folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-
-            filetype = file.get("filetype")
-            if filetype in ['image', 'video']:
-                if folder["is_external"] == 0:
-                    folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir,folder["is_external"])
-                else:
-                    folder_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,folder["folder_name"])
-
-                thumb_path = await file_util.thumbnail(filetype, file.get("filepath"), folder_path,
-                                                       file.get("filename"))
-                if thumb_path is not None:
-                    do_files = Album(
-                        table_name="album",  # 直接初始化字段值
-                        id=file.get("id"),
-                        thumb_path=thumb_path,
-                    )
-                    we_library.add_or_update(do_files, do_files.table_name)
-    return {
-        "success": True,
     }
 
 
@@ -646,13 +667,21 @@ def get_location_photos(longitude: float,
         folder_id = file.get("folder_id")
         filename = file.get("filename")
         folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-        file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
+        if folder["is_external"] == 1:
+            file["filepath"] = os.path.join("external", str(folder.get('id')), filename)
+        else:
+            file["filepath"] = os.path.join(config.source_img_dir, folder.get('folder_name'), filename)
         if file.get("thumb_path") is not None:
+            if folder["is_external"] == 1:
+                thumb_folder = os.path.join(config.thumb_path_external_dir, folder.get('folder_name'))
+            else:
+                thumb_folder = os.path.join(config.thumb_path_dir, folder.get('folder_name'))
+
             if file.get("filetype") == "video":
-                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'),
-                                                  f"{file_util.get_file_name_no_suffix(filename)}.jpg")
+                file["thumb_path"] = os.path.join(thumb_folder,
+                                                  file["thumb_path"])
             if file.get("filetype") == "image":
-                file["thumb_path"] = os.path.join(config.thumb_path_dir, folder.get('folder_name'), filename)
+                file["thumb_path"] = os.path.join(thumb_folder, file["thumb_path"])
         else:
             file["thumb_path"] = None
     return {"success": True,

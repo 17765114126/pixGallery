@@ -110,8 +110,6 @@ def get_folder_file_name(operate_folder):
 # 打开文件夹
 def open_folder(open_path):
     # 获取下载文件夹地址
-    if not open_path:
-        open_path = get_download_folder()
     subprocess.run(['explorer', open_path])
 
 
@@ -304,20 +302,22 @@ def extract_important_metadata(exif_data):
     important['gps'] = gps_info
     return important
 
-
+import uuid
 # --- 缩略图生成 ---
 async def thumbnail(filetype: str, access_path: str, folder_path: str, filename: str):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-    thumb_path = ""
+    suffix = get_file_suffix(filename)
+    thumb_path = f"{uuid.uuid4().hex}"
     if filetype == 'image':
-        thumb_path = os.path.join(folder_path, f"{filename}")
+        thumb_path = os.path.join(folder_path, f"{thumb_path}{suffix}")
         # 生成图片缩略图（异步执行）
         await generate_thumbnail(access_path, thumb_path)
     elif filetype == 'video':
-        thumb_path = os.path.join(folder_path, f"{get_file_name_no_suffix(filename)}.jpg")
+        thumb_path = os.path.join(folder_path, f"{thumb_path}.jpg")
         # 生成视频缩略图（异步执行）
         await generate_video_thumbnail(access_path, thumb_path)
+    thumb_path = get_file_name(thumb_path)
     return thumb_path
 
 
@@ -402,9 +402,16 @@ def get_audio_duration(audio_path):
     # 检查文件是否存在
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"文件不存在: {audio_path}")
-
+    # 获取文件扩展名
+    file_extension = os.path.splitext(audio_path)[1].lower()
     # 加载音频文件
-    audio = AudioSegment.from_file(audio_path)
+    # 明确指定格式
+    if file_extension in ['.mp3', '.wav', '.ogg', '.flac', '.aac']:
+        audio = AudioSegment.from_file(audio_path, format=file_extension[1:])
+    else:
+        # 对于其他格式，尝试自动检测
+        audio = AudioSegment.from_file(audio_path)
+
     duration = len(audio) / 1000.0  # 毫秒转秒
     formatted = str(timedelta(seconds=int(duration)))
     return formatted
