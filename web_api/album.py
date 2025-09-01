@@ -131,20 +131,18 @@ async def update_album(ids: str, folder_id: int):
         old_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, old_folder["folder_name"],
                                      one["filename"])
         new_folder = we_library.fetch_one(f"SELECT * FROM album_folders WHERE id = {folder_id}")
-        new_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, new_folder["folder_name"],
-                                     one["filename"])
+        new_file_path = os.path.join(config.ROOT_DIR_WIN, config.source_img_dir, new_folder["folder_name"])
         shutil.move(Path(old_file_path), Path(new_file_path))
 
         # 将缩略图移动至新相册
         if new_folder["is_external"] == 0:
-            old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
+            old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, old_folder["folder_name"],
                                                one["thumb_path"])
         elif new_folder["is_external"] == 1:
             old_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_external_dir,
-                                               new_folder["folder_name"],
+                                               old_folder["folder_name"],
                                                one["thumb_path"])
-        new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"],
-                                           one["thumb_path"])
+        new_thumb_path_path = os.path.join(config.ROOT_DIR_WIN, config.thumb_path_dir, new_folder["folder_name"])
         shutil.move(Path(old_thumb_path_path), Path(new_thumb_path_path))
         # 更新数据库记录
         do_album = Album(

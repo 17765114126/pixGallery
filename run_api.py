@@ -88,6 +88,9 @@ WHITELIST = ["/login"]
 # 访问地址：http://127.0.0.1:8686
 # 自动动生成交互式 API 文档，访问地址： http://127.0.0.1:8686/docs
 
+# 列出已安装包：pip freeze
+# 生成一个 requirements.txt，在项目根目录下运行：pipreqs . --use-local --encoding=utf8
+# pip install pipreqs
 def run():
     # 开启日志配置
     log_config.log_run()
